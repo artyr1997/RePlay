@@ -67,27 +67,6 @@ pub fn read_info(path: &Path) -> TrackInfo {
     info
 }
 
-/// The embedded cover of a file, or a cover.jpg / folder.jpg next to it.
-pub fn cover(path: &Path) -> Option<(Vec<u8>, String)> {
-    if let Ok(file) = lofty::read_from_path(path) {
-        for tag in file.tags() {
-            if let Some(pic) = tag.pictures().first() {
-                let mime = pic.mime_type().map(|m| m.as_str().to_owned()).unwrap_or_else(|| "image/jpeg".into());
-                return Some((pic.data().to_vec(), mime));
-            }
-        }
-    }
-    let dir = path.parent()?;
-    for name in ["cover.jpg", "cover.png", "folder.jpg", "folder.png", "front.jpg", "Cover.jpg", "Folder.jpg"] {
-        let p = dir.join(name);
-        if let Ok(bytes) = std::fs::read(&p) {
-            let mime = if name.ends_with("png") { "image/png" } else { "image/jpeg" };
-            return Some((bytes, mime.into()));
-        }
-    }
-    None
-}
-
 #[derive(Debug, Default, serde::Serialize)]
 pub struct ScanResult {
     pub added_or_updated: usize,

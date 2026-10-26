@@ -1,7 +1,7 @@
 //! ReSound: a quiet music player in the ReNote style.
 //! Rust scans the music folder, keeps the library and playlists in SQLite and
-//! plays the audio; the Svelte UI talks to it through these commands, the
-//! `player` / `scan` events and `resound://localhost/cover/<track id>`.
+//! plays the audio; the Svelte UI talks to it through these commands and the
+//! `player` / `scan` events.
 
 mod db;
 mod player;
@@ -13,7 +13,6 @@ use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
-use tauri::http::{Response, StatusCode};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 struct AppState {
@@ -278,24 +277,6 @@ fn reveal_in_finder(path: String) -> CmdResult<()> {
     std::process::Command::new("open").args(["-R", &path]).status().map(|_| ()).map_err(err)
 }
 
-// ── covers over resound:// ──
-
-fn serve_cover(app: &AppHandle, path: &str) -> Response<Vec<u8>> {
-    let id = path.trim_matches('/').strip_prefix("cover/").and_then(|s| s.parse::<i64>().ok());
-    let file = id.and_then(|id| app.state::<AppState>().db.lock().ok()?.track(id).ok()).map(|t| PathBuf::from(t.path));
-    let cover = file.as_deref().and_then(scan::cover);
-    let builder = Response::builder().header("Access-Control-Allow-Origin", "*");
-    match cover {
-        Some((bytes, mime)) => builder
-            .status(StatusCode::OK)
-            .header("Content-Type", mime)
-            .header("Cache-Control", "max-age=86400")
-            .body(bytes),
-        None => builder.status(StatusCode::NOT_FOUND).body(Vec::new()),
-    }
-    .unwrap_or_else(|_| Response::new(Vec::new()))
-}
-
 /// The title bar is transparent (see tauri.conf.json) and the UI draws its own
 /// vertical close / minimise / zoom buttons, so the native ones are hidden.
 #[cfg(target_os = "macos")]
@@ -320,11 +301,6 @@ fn hide_native_window_buttons(window: &tauri::WebviewWindow) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .register_asynchronous_uri_scheme_protocol("resound", |ctx, request, responder| {
-            let app = ctx.app_handle().clone();
-            let path = request.uri().path().to_owned();
-            std::thread::spawn(move || responder.respond(serve_cover(&app, &path)));
-        })
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;

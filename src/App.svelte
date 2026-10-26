@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import { listen } from '@tauri-apps/api/event';
+	import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
 	import WindowControls from './lib/WindowControls.svelte';
 	import Popup from './lib/Popup.svelte';
-	import Cover from './lib/Cover.svelte';
 	import { scrollFade } from './lib/scrollFade';
 	import {
 		api, albums, artists, songs, matches, formatTime,
@@ -37,6 +37,19 @@
 	let loaded = $state(false);
 	let folder: string | null = $state(null);
 	let scan: { done: number; total: number } | null = $state(null);
+
+	// ── mini player: a small window with just the song and the controls ──
+	const MINI = { width: 440, height: 300 };
+	const FULL = { width: 1440, height: 900 };
+	let winWidth = $state(window.innerWidth);
+	let winHeight = $state(window.innerHeight);
+	// a small window shows the mini player, however it got small
+	let mini = $derived(winWidth < 760 || winHeight < 560);
+
+	async function setMini(on: boolean) {
+		const size = on ? MINI : FULL;
+		await getCurrentWindow().setSize(new LogicalSize(size.width, size.height));
+	}
 
 	let status: Status = $state({ track: null, playing: false, positionMs: 0, shuffle: false, repeat: 'off', error: null });
 
@@ -334,6 +347,22 @@
 	function handleKeydown(e: KeyboardEvent) {
 		const mod = e.metaKey || e.ctrlKey;
 
+		if (mini) {
+			if (e.key === ' ') {
+				e.preventDefault();
+				api.togglePlay().then(refreshStatus);
+			} else if (e.key === 'ArrowRight') {
+				e.preventDefault();
+				api.next().then(refreshStatus);
+			} else if (e.key === 'ArrowLeft') {
+				e.preventDefault();
+				api.previous().then(refreshStatus);
+			} else if (!mod && e.code === 'KeyM') {
+				setMini(false);
+			}
+			return;
+		}
+
 		if (popup !== 'none') {
 			if (e.key === 'Escape') {
 				e.preventDefault();
@@ -415,6 +444,8 @@
 			openActions();
 		} else if (!mod && e.code === 'KeyI') {
 			popup = 'info';
+		} else if (!mod && e.code === 'KeyM') {
+			setMini(true);
 		} else if (!mod && e.code === 'KeyN') {
 			pendingTrackIds = [];
 			openName('create');
@@ -453,11 +484,14 @@
 		['Q', 'Up next'],
 		['E / right click', 'Actions'],
 		['N', 'New playlist'],
+		['M', 'Mini player'],
 		['I', 'Info'],
 	];
 </script>
 
 <svelte:window
+	bind:innerWidth={winWidth}
+	bind:innerHeight={winHeight}
 	onkeydown={handleKeydown}
 	oncontextmenu={e => {
 		if ((e.target as HTMLElement)?.tagName !== 'INPUT') e.preventDefault();
@@ -465,6 +499,36 @@
 />
 
 <WindowControls />
+
+{#if mini}
+	<!-- mini player: song in the middle, the artist below, the controls under it -->
+	<main class="mini fade-in">
+		<button class="mini-expand" onclick={() => setMini(false)} title="Library (M)">LIBRARY</button>
+		{#if status.error}
+			<p class="mini-title error">{status.error}</p>
+		{:else if status.track}
+			<p class="mini-title">{status.track.title}</p>
+			<p class="mini-artist">{status.track.artist || status.track.albumArtist}</p>
+		{:else}
+			<p class="mini-title idle">Nothing playing.</p>
+		{/if}
+		<div class="progress-row mini-progress">
+			<span class="clock">{formatTime(status.positionMs)}</span>
+			<button class="bar" onclick={seekTo} aria-label="Seek" disabled={!status.track}>
+				<span class="bar-line"></span>
+				<span class="bar-fill" style="width: {progress * 100}%"></span>
+			</button>
+			<span class="clock">{formatTime(status.track?.durationMs ?? 0)}</span>
+		</div>
+		<div class="mini-controls">
+			<button class="mini-btn" onclick={() => api.previous().then(refreshStatus)} title="Previous (←)">PREV</button>
+			<button class="play" onclick={() => api.togglePlay().then(refreshStatus)} title="Play / pause (Space)">
+				<span class="ink-mark">{status.playing ? 'PAUSE' : 'PLAY'}</span>
+			</button>
+			<button class="mini-btn" onclick={() => api.next().then(refreshStatus)} title="Next (→)">NEXT</button>
+		</div>
+	</main>
+{:else}
 
 <!-- shuffle / repeat: inked with a vertical stroke when on -->
 <button class="side switch shuf" class:ink-mark-v={status.shuffle} onclick={toggleShuffle} title="Shuffle (S)">SHUF</button>
@@ -548,9 +612,6 @@
 			{#if group}
 				{#key group.key}
 					<header class="head fade-in">
-						{#if tab === 'albums' && group.tracks[0]}
-							<Cover trackId={group.tracks[0].id} title={group.title} size={112} />
-						{/if}
 						<div class="head-text">
 							<p class="head-title">{group.title}</p>
 							<p class="head-sub">
@@ -602,10 +663,15 @@
 		</button>
 		<span class="clock">{formatTime(status.track?.durationMs ?? 0)}</span>
 	</div>
-	<button class="play" onclick={() => api.togglePlay().then(refreshStatus)} title="Play / pause (Space)">
-		<span class="ink-mark">{status.playing ? 'PAUSE' : 'PLAY'}</span>
-	</button>
+	<div class="player-controls">
+		<button class="play" onclick={() => api.togglePlay().then(refreshStatus)} title="Play / pause (Space)">
+			<span class="ink-mark">{status.playing ? 'PAUSE' : 'PLAY'}</span>
+		</button>
+		<button class="mini-toggle" onclick={() => setMini(true)} title="Mini player (M)">MINI</button>
+	</div>
 </footer>
+
+{/if}
 
 {#if scan}
 	<div class="toast"><span>SCAN</span></div>
@@ -786,7 +852,7 @@
 		padding: 0;
 		text-align: left;
 		font-family: 'Kurale', serif;
-		font-size: 18px;
+		font-size: 16px;
 		line-height: 1.2;
 		cursor: url('/ink/hand.svg'), pointer;
 		scroll-margin: 56px 0;
@@ -864,7 +930,7 @@
 
 	.head-title {
 		font-family: 'Kurale', serif;
-		font-size: 26px;
+		font-size: 24px;
 		line-height: 1.2;
 		overflow-wrap: anywhere;
 	}
@@ -891,7 +957,7 @@
 	}
 
 	.cell {
-		font-size: 15px;
+		font-size: 16px;
 		opacity: 0.7;
 		white-space: nowrap;
 		overflow: hidden;
@@ -902,7 +968,7 @@
 
 	.empty {
 		font-family: 'Kurale', serif;
-		font-size: 18px;
+		font-size: 16px;
 		opacity: 0.45;
 	}
 
@@ -942,7 +1008,7 @@
 	.now {
 		max-width: 100%;
 		font-family: 'Kurale', serif;
-		font-size: 20px;
+		font-size: 24px;
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -993,6 +1059,95 @@
 
 	.play .ink-mark { padding-right: calc(0.45em - 0.4em); }
 
+	.player-controls {
+		position: relative;
+		display: flex;
+		justify-content: center;
+		width: 100%;
+	}
+
+	.mini-toggle,
+	.mini-btn,
+	.mini-expand {
+		background: transparent;
+		border: none;
+		padding: 0.3em 0.4em;
+		font-family: 'Noto Sans JP', sans-serif;
+		font-size: 12px;
+		letter-spacing: 0.3em;
+		opacity: 0.6;
+		cursor: url('/ink/hand.svg'), pointer;
+		transition: opacity 200ms ease;
+	}
+
+	.mini-toggle:hover,
+	.mini-btn:hover,
+	.mini-expand:hover {
+		opacity: 1;
+	}
+
+	.mini-toggle {
+		position: absolute;
+		right: 0;
+		top: 50%;
+		transform: translateY(-50%);
+	}
+
+	/* ── mini player ── */
+	.mini {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 10px;
+		padding: 36px 28px 24px;
+	}
+
+	.mini-expand {
+		position: fixed;
+		top: 12px;
+		right: 12px;
+	}
+
+	.mini-title {
+		max-width: 100%;
+		font-family: 'Kurale', serif;
+		font-size: 24px;
+		line-height: 1.25;
+		text-align: center;
+		overflow-wrap: anywhere;
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+	}
+
+	.mini-title.idle { opacity: 0.45; }
+	.mini-title.error { font-size: 15px; color: #b04a45; }
+
+	.mini-artist {
+		max-width: 100%;
+		font-family: 'Kurale', serif;
+		font-size: 16px;
+		opacity: 0.6;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.mini-progress {
+		margin-top: 14px;
+		max-width: 380px;
+	}
+
+	.mini-controls {
+		display: flex;
+		align-items: center;
+		gap: 1.6rem;
+		margin-top: 4px;
+	}
+
 	/* ── toast (like ReNote's SAVED) ── */
 	.toast {
 		position: fixed;
@@ -1033,7 +1188,7 @@
 		border: none;
 		padding: 0;
 		font-family: 'Kurale', serif;
-		font-size: 19px;
+		font-size: 16px;
 		line-height: 1.2;
 		text-align: left;
 		cursor: url('/ink/hand.svg'), pointer;
@@ -1053,7 +1208,7 @@
 		align-items: baseline;
 		gap: 12px;
 		font-family: 'Kurale', serif;
-		font-size: 17px;
+		font-size: 16px;
 		min-width: 0;
 	}
 
