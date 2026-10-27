@@ -68,50 +68,6 @@ export function formatTime(ms: number): string {
 	return h ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
 }
 
-export interface Group {
-	key: string;
-	title: string;
-	subtitle: string;
-	tracks: Track[];
-}
-
-const unknown = (s: string, fallback: string) => s || fallback;
-const byName = (a: Group, b: Group) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base', numeric: true });
-
-/** Albums: one per album artist + album name; tracks keep album order from Rust. */
-export function albums(tracks: Track[]): Group[] {
-	const map = new Map<string, Group>();
-	for (const t of tracks) {
-		const key = `${t.albumArtist}\u0000${t.album}`;
-		let g = map.get(key);
-		if (!g) {
-			g = { key, title: unknown(t.album, 'Unknown album'), subtitle: unknown(t.albumArtist, 'Unknown artist'), tracks: [] };
-			map.set(key, g);
-		}
-		g.tracks.push(t);
-	}
-	return [...map.values()].sort(byName);
-}
-
-/** Artists by album artist, their albums in order. */
-export function artists(tracks: Track[]): Group[] {
-	const map = new Map<string, Group>();
-	for (const t of tracks) {
-		const name = unknown(t.albumArtist || t.artist, 'Unknown artist');
-		let g = map.get(name);
-		if (!g) {
-			g = { key: name, title: name, subtitle: '', tracks: [] };
-			map.set(name, g);
-		}
-		g.tracks.push(t);
-	}
-	for (const g of map.values()) {
-		const albumCount = new Set(g.tracks.map(t => t.album)).size;
-		g.subtitle = `${albumCount} ${albumCount === 1 ? 'album' : 'albums'}`;
-	}
-	return [...map.values()].sort(byName);
-}
-
 export function songs(tracks: Track[]): Track[] {
 	return [...tracks].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base', numeric: true }));
 }

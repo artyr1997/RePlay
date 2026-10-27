@@ -6,32 +6,11 @@
 	import WindowControls from './lib/WindowControls.svelte';
 	import Popup from './lib/Popup.svelte';
 	import { scrollFade } from './lib/scrollFade';
-	import {
-		api, albums, artists, songs, matches, formatTime,
-		type Track, type Playlist, type Group, type Status,
-	} from './lib/music';
+	import { api, songs, matches, formatTime, type Track, type Status } from './lib/music';
 
-	type Tab = 'albums' | 'artists' | 'songs' | 'lists';
-	type Focus = 'groups' | 'tracks';
-	type Target =
-		| { kind: 'track'; track: Track; index: number }
-		| { kind: 'group'; group: Group }
-		| { kind: 'playlist'; playlist: Playlist };
-	type PopupKind = 'none' | 'actions' | 'pick-playlist' | 'name' | 'delete' | 'queue' | 'info';
+	type PopupKind = 'none' | 'actions' | 'queue' | 'info';
 
-	const tabs: { id: Tab; label: string }[] = [
-		{ id: 'albums', label: 'ALBUMS' },
-		{ id: 'artists', label: 'ARTISTS' },
-		{ id: 'songs', label: 'SONGS' },
-		{ id: 'lists', label: 'LISTS' },
-	];
-
-	let tab = $state<Tab>('albums');
-	let focus = $state<Focus>('groups');
 	let allTracks: Track[] = $state([]);
-	let lists: Playlist[] = $state([]);
-	let listTracks: Track[] = $state([]);
-	let gi = $state(0);
 	let ti = $state(0);
 	let query = $state('');
 	let loaded = $state(false);
@@ -54,90 +33,28 @@
 	let status: Status = $state({ track: null, playing: false, positionMs: 0, shuffle: false, repeat: 'off', error: null });
 
 	let searchInput: HTMLInputElement | undefined = $state();
-	let groupList: HTMLDivElement | undefined = $state();
 	let trackList: HTMLDivElement | undefined = $state();
 
-	// ── what is shown ──
+	// ── what is shown: every song, A to Z ──
 
 	let q = $derived(query.trim().toLowerCase());
-	let filtered = $derived(q ? allTracks.filter(t => matches(t, q)) : allTracks);
-
-	let groups: Group[] = $derived.by(() => {
-		if (tab === 'albums') return albums(filtered);
-		if (tab === 'artists') return artists(filtered);
-		if (tab === 'lists') {
-			return lists
-				.filter(p => !q || p.name.toLowerCase().includes(q))
-				.map(p => ({ key: String(p.id), title: p.name, subtitle: `${p.trackCount} ${p.trackCount === 1 ? 'song' : 'songs'}`, tracks: [] }));
-		}
-		return [];
-	});
-	let group: Group | undefined = $derived(groups[gi]);
-	let playlist: Playlist | undefined = $derived(tab === 'lists' && group ? lists.find(p => String(p.id) === group.key) : undefined);
-
-	let tracks: Track[] = $derived(
-		tab === 'songs' ? songs(filtered) : tab === 'lists' ? listTracks : (group?.tracks ?? []),
-	);
+	let tracks: Track[] = $derived(songs(q ? allTracks.filter(t => matches(t, q)) : allTracks));
 	let track: Track | undefined = $derived(tracks[ti]);
-
-	// playlist contents load when the selection changes
-	let listToken = 0;
-	$effect(() => {
-		const p = playlist;
-		const token = ++listToken;
-		if (!p) {
-			listTracks = [];
-			return;
-		}
-		api.playlistTracks(p.id).then(t => {
-			if (token === listToken) listTracks = t;
-		});
-	});
-
-	const albumCount = $derived(albums(allTracks).length);
-	const artistCount = $derived(artists(allTracks).length);
 
 	// ── loading ──
 
 	async function loadLibrary() {
-		[allTracks, lists, folder] = await Promise.all([api.tracks(), api.playlists(), api.musicFolder()]);
+		[allTracks, folder] = await Promise.all([api.tracks(), api.musicFolder()]);
 		loaded = true;
-		gi = Math.min(gi, Math.max(groups.length - 1, 0));
 		ti = Math.min(ti, Math.max(tracks.length - 1, 0));
-	}
-
-	async function reloadLists() {
-		lists = await api.playlists();
-		if (playlist) listTracks = await api.playlistTracks(playlist.id);
-	}
-
-	function selectTab(next: Tab) {
-		if (tab === next) return;
-		tab = next;
-		gi = 0;
-		ti = 0;
-		focus = next === 'songs' ? 'tracks' : 'groups';
 	}
 
 	// ── playback ──
 
-	async function playTracks(list: Track[], start = 0, shuffle = false) {
+	async function playTracks(list: Track[], start = 0) {
 		if (!list.length) return;
-		if (shuffle !== status.shuffle) await api.setShuffle(shuffle);
-		await api.play(list.map(t => t.id), shuffle ? Math.floor(Math.random() * list.length) : start);
+		await api.play(list.map(t => t.id), start);
 		await refreshStatus();
-	}
-
-	async function tracksOf(target: Target): Promise<Track[]> {
-		if (target.kind === 'track') return [target.track];
-		if (target.kind === 'group') return target.group.tracks.length ? target.group.tracks : tracks;
-		return api.playlistTracks(target.playlist.id);
-	}
-
-	function playSelected() {
-		if (focus === 'tracks' || tab === 'songs') playTracks(tracks, ti);
-		else if (tab === 'lists') playTracks(tracks, 0);
-		else if (group) playTracks(group.tracks, 0);
 	}
 
 	async function refreshStatus() {
@@ -166,35 +83,18 @@
 
 	// ── selection ──
 
-	async function scrollIntoView(list: HTMLDivElement | undefined) {
+	async function move(delta: number) {
+		if (!tracks.length) return;
+		ti = (ti + delta + tracks.length) % tracks.length;
 		await tick();
-		list?.querySelector('.row.active')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-	}
-
-	function move(delta: number) {
-		if (focus === 'groups' && tab !== 'songs') {
-			if (!groups.length) return;
-			gi = (gi + delta + groups.length) % groups.length;
-			ti = 0;
-			scrollIntoView(groupList);
-		} else {
-			if (!tracks.length) return;
-			ti = (ti + delta + tracks.length) % tracks.length;
-			scrollIntoView(trackList);
-		}
+		trackList?.querySelector('.row.active')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 	}
 
 	// ── popups ──
 
 	let popup = $state<PopupKind>('none');
-	let target: Target | null = $state(null);
+	let target: { track: Track; index: number } | null = $state(null);
 	let selectedAction = $state(0);
-	let pickIndex = $state(0);
-	let nameMode = $state<'create' | 'rename'>('create');
-	let nameValue = $state('');
-	let nameInput: HTMLInputElement | undefined = $state();
-	let pendingTrackIds: number[] = $state([]);
-	let popupError = $state('');
 	let upcoming: Track[] = $state([]);
 	let toast = $state('');
 	let toastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -211,117 +111,24 @@
 		const t = target;
 		if (!t) return [];
 		const add = async (fn: (ids: number[]) => Promise<void>, msg: string) => {
-			await fn((await tracksOf(t)).map(x => x.id));
+			await fn([t.track.id]);
 			closePopup();
 			showToast(msg);
 		};
-		const common: Action[] = [
+		return [
+			{ label: 'Play', run: () => { closePopup(); playTracks(tracks, t.index); } },
 			{ label: 'Play next', run: () => add(api.playNext, 'NEXT') },
 			{ label: 'Add to queue', run: () => add(api.addToQueue, 'QUEUED') },
-			{ label: 'Add to playlist…', run: () => openPicker(t) },
-		];
-		if (t.kind === 'track') {
-			return [
-				{ label: 'Play', run: () => { closePopup(); playTracks(tracks, t.index); } },
-				...common,
-				...(tab === 'lists' && playlist ? [{ label: 'Remove from playlist', run: () => removeFromPlaylist(t.index) }] : []),
-				{ label: 'Show in Finder', run: () => { closePopup(); api.reveal(t.track.path); } },
-			];
-		}
-		if (t.kind === 'group') {
-			return [
-				{ label: 'Play', run: () => { closePopup(); playTracks(t.group.tracks, 0); } },
-				{ label: 'Shuffle', run: () => { closePopup(); playTracks(t.group.tracks, 0, true); } },
-				...common,
-			];
-		}
-		return [
-			{ label: 'Play', run: async () => { closePopup(); playTracks(await tracksOf(t), 0); } },
-			{ label: 'Shuffle', run: async () => { closePopup(); playTracks(await tracksOf(t), 0, true); } },
-			{ label: 'Rename', run: () => openName('rename', t.playlist.name) },
-			{ label: 'Delete', run: () => { popupError = ''; popup = 'delete'; } },
+			{ label: 'Show in Finder', run: () => { closePopup(); api.reveal(t.track.path); } },
 		];
 	});
 
-	function currentTarget(): Target | null {
-		if ((focus === 'tracks' || tab === 'songs') && track) return { kind: 'track', track, index: ti };
-		if (tab === 'lists' && playlist) return { kind: 'playlist', playlist };
-		if (group) return { kind: 'group', group };
-		return null;
-	}
-
-	function openActions(t: Target | null = currentTarget()) {
+	function openActions(index = ti) {
+		const t = tracks[index];
 		if (!t) return;
-		target = t;
+		target = { track: t, index };
 		selectedAction = 0;
-		popupError = '';
 		popup = 'actions';
-	}
-
-	async function openPicker(t: Target) {
-		pendingTrackIds = (await tracksOf(t)).map(x => x.id);
-		pickIndex = 0;
-		popupError = '';
-		popup = 'pick-playlist';
-	}
-
-	async function pickPlaylist(index: number) {
-		if (index === 0) {
-			openName('create');
-			return;
-		}
-		const p = lists[index - 1];
-		await api.addToPlaylist(p.id, pendingTrackIds);
-		closePopup();
-		await reloadLists();
-		showToast('ADDED');
-	}
-
-	async function openName(mode: 'create' | 'rename', value = '') {
-		nameMode = mode;
-		nameValue = value;
-		popupError = '';
-		popup = 'name';
-		await tick();
-		nameInput?.focus();
-		nameInput?.select();
-	}
-
-	async function submitName() {
-		try {
-			if (nameMode === 'create') {
-				const id = await api.createPlaylist(nameValue, pendingTrackIds);
-				pendingTrackIds = [];
-				await reloadLists();
-				if (tab === 'lists') {
-					query = '';
-					gi = Math.max(0, lists.findIndex(p => p.id === id));
-				}
-				showToast('SAVED');
-			} else if (target?.kind === 'playlist') {
-				await api.renamePlaylist(target.playlist.id, nameValue);
-				await reloadLists();
-			}
-			closePopup();
-		} catch (e) {
-			popupError = String(e);
-		}
-	}
-
-	async function deletePlaylist() {
-		if (target?.kind !== 'playlist') return;
-		await api.deletePlaylist(target.playlist.id);
-		closePopup();
-		await reloadLists();
-		gi = Math.min(gi, Math.max(groups.length - 1, 0));
-	}
-
-	async function removeFromPlaylist(index: number) {
-		if (!playlist) return;
-		await api.removeFromPlaylist(playlist.id, index);
-		closePopup();
-		await reloadLists();
-		ti = Math.min(ti, Math.max(listTracks.length - 1, 0));
 	}
 
 	async function openQueue() {
@@ -369,18 +176,13 @@
 				closePopup();
 				return;
 			}
-			const listLen = popup === 'actions' ? actions.length : popup === 'pick-playlist' ? lists.length + 1 : 0;
-			if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && listLen) {
+			if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && popup === 'actions') {
 				e.preventDefault();
 				const d = e.key === 'ArrowDown' ? 1 : -1;
-				if (popup === 'actions') selectedAction = (selectedAction + d + listLen) % listLen;
-				else pickIndex = (pickIndex + d + listLen) % listLen;
+				selectedAction = (selectedAction + d + actions.length) % actions.length;
 			} else if (e.key === 'Enter') {
 				e.preventDefault();
 				if (popup === 'actions') actions[selectedAction]?.run();
-				else if (popup === 'pick-playlist') pickPlaylist(pickIndex);
-				else if (popup === 'name') submitName();
-				else if (popup === 'delete') deletePlaylist();
 				else closePopup();
 			}
 			return;
@@ -392,7 +194,7 @@
 				move(e.key === 'ArrowDown' ? 1 : -1);
 			} else if (e.key === 'Enter') {
 				e.preventDefault();
-				playSelected();
+				playTracks(tracks, ti);
 			} else if (e.key === 'Escape') {
 				query = '';
 				searchInput?.blur();
@@ -413,27 +215,12 @@
 		} else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
 			e.preventDefault();
 			move(e.key === 'ArrowDown' ? 1 : -1);
-		} else if (e.key === 'ArrowRight' && tab !== 'songs') {
-			e.preventDefault();
-			if (tracks.length) focus = 'tracks';
-		} else if (e.key === 'ArrowLeft' && tab !== 'songs') {
-			e.preventDefault();
-			focus = 'groups';
 		} else if (e.key === 'Enter') {
 			e.preventDefault();
-			playSelected();
-		} else if (e.key === 'Backspace' || e.key === 'Delete') {
-			e.preventDefault();
-			if (tab === 'lists' && focus === 'tracks' && track) removeFromPlaylist(ti);
-			else if (tab === 'lists' && playlist) {
-				target = { kind: 'playlist', playlist };
-				popup = 'delete';
-			}
+			playTracks(tracks, ti);
 		} else if (e.code === 'Slash') {
 			e.preventDefault();
 			searchInput?.focus();
-		} else if (!mod && /^Digit[1-4]$/.test(e.code)) {
-			selectTab(tabs[Number(e.code.slice(5)) - 1].id);
 		} else if (!mod && e.code === 'KeyS') {
 			toggleShuffle();
 		} else if (!mod && e.code === 'KeyR') {
@@ -446,9 +233,6 @@
 			popup = 'info';
 		} else if (!mod && e.code === 'KeyM') {
 			setMini(true);
-		} else if (!mod && e.code === 'KeyN') {
-			pendingTrackIds = [];
-			openName('create');
 		}
 	}
 
@@ -476,18 +260,17 @@
 	const shortcuts = [
 		['Space', 'Play / pause'],
 		['⌘ ← / ⌘ →', 'Previous / next song'],
-		['↑ ↓ ← →', 'Move around'],
+		['↑ ↓', 'Move around'],
 		['Enter', 'Play'],
-		['1 – 4', 'Albums, Artists, Songs, Lists'],
 		['/', 'Search'],
 		['S / R', 'Shuffle / repeat'],
 		['Q', 'Up next'],
 		['E / right click', 'Actions'],
-		['N', 'New playlist'],
 		['M', 'Mini player'],
 		['I', 'Info'],
 	];
 </script>
+
 
 <svelte:window
 	bind:innerWidth={winWidth}
@@ -542,13 +325,8 @@
 <button class="side plain nav-info" onclick={() => (popup = 'info')} title="Info (I)">INFO</button>
 <button class="side plain nav-queue" onclick={openQueue} title="Up next (Q)">QUEUE</button>
 
-<nav class="tabs">
-	{#each tabs as t}
-		<button class="tab" onclick={() => selectTab(t.id)}>
-			<span class:ink-mark={tab === t.id}>{t.label}</span>
-		</button>
-	{/each}
-</nav>
+<!-- the search is the title -->
+<input bind:this={searchInput} bind:value={query} class="search" type="text" placeholder="Search" oninput={() => (ti = 0)} />
 
 <main class="fade-in">
 	{#if loaded && allTracks.length === 0 && !scan}
@@ -556,93 +334,27 @@
 			<p>No music in <span class="ink-mark">{folder ? folder.split('/').pop() : 'your folder'}</span> yet.</p>
 			<button class="pop-btn" onclick={chooseFolder}>CHOOSE FOLDER</button>
 		</div>
-	{:else if tab === 'songs'}
-		<section class="songs">
-			<input bind:this={searchInput} bind:value={query} class="search" type="text" placeholder="Search" oninput={() => (ti = 0)} />
-			<div class="list scroll" bind:this={trackList} use:scrollFade>
-				{#each tracks as t, i (t.id)}
-					<button
-						class="row song-row"
-						class:active={i === ti}
-						onclick={() => (ti = i)}
-						ondblclick={() => playTracks(tracks, i)}
-						oncontextmenu={() => { ti = i; openActions({ kind: 'track', track: t, index: i }); }}
-					>
-						<span class="cell-title">
-							{#if status.track?.id === t.id}<span class="dot"></span>{/if}
-							<span class="name" class:ink-mark={i === ti}>{t.title}</span>
-						</span>
-						<span class="cell">{t.artist}</span>
-						<span class="cell">{t.album}</span>
-						<span class="cell time">{formatTime(t.durationMs)}</span>
-					</button>
-				{:else}
-					<p class="empty">{q ? 'Nothing found.' : 'No songs yet.'}</p>
-				{/each}
-			</div>
-		</section>
 	{:else}
-		<section class="groups">
-			<input bind:this={searchInput} bind:value={query} class="search" type="text" placeholder="Search" oninput={() => { gi = 0; ti = 0; }} />
-			<div class="list scroll" bind:this={groupList} use:scrollFade>
-				{#each groups as g, i (g.key)}
-					<button
-						class="row group-row"
-						class:active={i === gi}
-						onclick={() => { gi = i; ti = 0; focus = 'groups'; }}
-						ondblclick={() => { gi = i; playSelected(); }}
-						oncontextmenu={() => {
-							gi = i;
-							const p = tab === 'lists' ? lists.find(x => String(x.id) === g.key) : undefined;
-							openActions(p ? { kind: 'playlist', playlist: p } : { kind: 'group', group: g });
-						}}
-					>
-						<span class="name" class:ink-mark={i === gi}>{g.title}</span>
-						<span class="sub">{g.subtitle}</span>
-					</button>
-				{:else}
-					<p class="empty">
-						{#if q}Nothing found.{:else if tab === 'lists'}No playlists yet. Press <b>N</b>.{:else}No music yet.{/if}
-					</p>
-				{/each}
-			</div>
-		</section>
-
-		<section class="tracks">
-			{#if group}
-				{#key group.key}
-					<header class="head fade-in">
-						<div class="head-text">
-							<p class="head-title">{group.title}</p>
-							<p class="head-sub">
-								{group.subtitle}{#if tab === 'albums' && group.tracks[0]?.year} · {group.tracks[0].year}{/if}
-								· {formatTime(tracks.reduce((s, t) => s + t.durationMs, 0))}
-							</p>
-						</div>
-					</header>
-				{/key}
-			{/if}
-			<div class="list scroll" bind:this={trackList} use:scrollFade>
-				{#each tracks as t, i (`${t.id}-${i}`)}
-					<button
-						class="row track-row"
-						class:active={i === ti && focus === 'tracks'}
-						onclick={() => { ti = i; focus = 'tracks'; }}
-						ondblclick={() => playTracks(tracks, i)}
-						oncontextmenu={() => { ti = i; focus = 'tracks'; openActions({ kind: 'track', track: t, index: i }); }}
-					>
-						<span class="no">
-							{#if status.track?.id === t.id}<span class="dot"></span>{:else if tab === 'albums'}{t.trackNo ?? ''}{:else}{i + 1}{/if}
-						</span>
-						<span class="name" class:ink-mark={i === ti && focus === 'tracks'}>{t.title}</span>
-						{#if tab !== 'albums'}<span class="artist">{t.artist}</span>{/if}
-						<span class="time">{formatTime(t.durationMs)}</span>
-					</button>
-				{:else}
-					{#if tab === 'lists' && playlist}<p class="empty">Empty playlist. Add songs with <b>E</b>.</p>{/if}
-				{/each}
-			</div>
-		</section>
+		<div class="songs scroll" bind:this={trackList} use:scrollFade>
+			{#each tracks as t, i (t.id)}
+				<button
+					class="row song-row"
+					class:active={i === ti}
+					onclick={() => (ti = i)}
+					ondblclick={() => playTracks(tracks, i)}
+					oncontextmenu={() => { ti = i; openActions(i); }}
+				>
+					<span class="cell-title">
+						{#if status.track?.id === t.id}<span class="dot"></span>{/if}
+						<span class="name" class:ink-mark={i === ti}>{t.title}</span>
+					</span>
+					<span class="cell">{t.artist || t.albumArtist}</span>
+					<span class="cell time">{formatTime(t.durationMs)}</span>
+				</button>
+			{:else}
+				<p class="empty">{q ? 'Nothing found.' : 'No songs yet.'}</p>
+			{/each}
+		</div>
 	{/if}
 </main>
 
@@ -681,9 +393,7 @@
 
 {#if popup === 'actions' && target}
 	<Popup onclose={closePopup}>
-		<p class="pop-text">
-			{target.kind === 'track' ? target.track.title : target.kind === 'group' ? target.group.title : target.playlist.name}
-		</p>
+		<p class="pop-text">{target.track.title}</p>
 		<div class="pop-divider"></div>
 		<div class="menu">
 			{#each actions as action, i}
@@ -691,38 +401,6 @@
 					<span class:ink-mark={i === selectedAction}>{action.label}</span>
 				</button>
 			{/each}
-		</div>
-	</Popup>
-{:else if popup === 'pick-playlist'}
-	<Popup onclose={closePopup}>
-		<p class="pop-heading">ADD TO PLAYLIST</p>
-		<div class="pop-divider"></div>
-		<div class="menu">
-			{#each ['New playlist…', ...lists.map(p => p.name)] as label, i}
-				<button class="menu-item" onclick={() => pickPlaylist(i)} onmouseenter={() => (pickIndex = i)}>
-					<span class:ink-mark={i === pickIndex}>{label}</span>
-				</button>
-			{/each}
-		</div>
-	</Popup>
-{:else if popup === 'name'}
-	<Popup onclose={closePopup}>
-		<p class="pop-heading">{nameMode === 'create' ? 'NEW PLAYLIST' : 'RENAME'}</p>
-		<div class="pop-divider"></div>
-		<input bind:this={nameInput} bind:value={nameValue} class="name-input" type="text" maxlength="80" placeholder="Name" />
-		{#if popupError}<p class="pop-error">{popupError}</p>{/if}
-		<div class="pop-actions">
-			<button class="pop-btn" onclick={submitName}>{nameMode === 'create' ? 'CREATE' : 'RENAME'}</button>
-			<button class="pop-btn" onclick={closePopup}>CANCEL</button>
-		</div>
-	</Popup>
-{:else if popup === 'delete' && target?.kind === 'playlist'}
-	<Popup onclose={closePopup}>
-		<p class="pop-text">Delete the playlist “{target.playlist.name}”?</p>
-		<p class="pop-note">The songs stay in your library.</p>
-		<div class="pop-actions">
-			<button class="pop-btn" onclick={deletePlaylist}>YES</button>
-			<button class="pop-btn" onclick={closePopup}>NO</button>
 		</div>
 	</Popup>
 {:else if popup === 'queue'}
@@ -743,7 +421,7 @@
 	<Popup onclose={closePopup}>
 		<p class="pop-heading">RE:SOUND</p>
 		<div class="pop-divider"></div>
-		<p class="pop-text">{allTracks.length} songs · {albumCount} albums · {artistCount} artists</p>
+		<p class="pop-text">{allTracks.length} {allTracks.length === 1 ? 'song' : 'songs'}</p>
 		<p class="pop-note">{folder ?? 'No folder chosen'}</p>
 		<div class="pop-actions">
 			<button class="pop-btn" onclick={chooseFolder}>FOLDER</button>
@@ -774,45 +452,14 @@
 	.nav-info { left: calc(6.25% - 28px); bottom: 6.25%; width: 42px; }
 	.nav-queue { right: calc(6.25% - 28px); bottom: 6.25%; width: 42px; }
 
-	/* ── tabs ── */
-	.tabs {
+	/* ── search, in the place of a title ── */
+	.search {
 		position: fixed;
 		top: 32px;
 		left: 50%;
 		transform: translateX(-50%);
-		display: flex;
-		gap: 2.2rem;
-		z-index: 5;
-	}
-
-	.tab {
-		background: transparent;
-		border: none;
-		padding: 0.3em 0.5em;
-		font-family: 'Noto Sans JP', sans-serif;
-		font-size: 14px;
-		letter-spacing: 0.35em;
-		cursor: url('/ink/hand.svg'), pointer;
-	}
-
-	/* ── columns ── */
-	.groups,
-	.tracks,
-	.songs {
-		position: absolute;
-		top: calc(6.25% + 72px);
-		bottom: calc(6.25% + 132px);
-		display: flex;
-		flex-direction: column;
-		gap: 18px;
-	}
-
-	.groups { left: calc(21.3% - 0.6em); width: 27%; }
-	.tracks { left: 54%; right: calc(6.25% + 64px); }
-	.songs { left: calc(6.25% + 96px); right: calc(6.25% + 96px); }
-
-	.search {
-		width: 100%;
+		width: 360px;
+		max-width: calc(100% - 2 * (6.25% + 60px));
 		background: transparent;
 		border: none;
 		outline: none;
@@ -821,7 +468,7 @@
 		line-height: 32px;
 		text-align: center;
 		color: var(--text);
-		flex-shrink: 0;
+		z-index: 5;
 	}
 
 	.search::placeholder {
@@ -829,9 +476,14 @@
 		opacity: 0.5;
 	}
 
-	.list {
-		flex: 1;
-		min-height: 0;
+	/* ── songs ── */
+	.songs {
+		position: absolute;
+		/* right under the search */
+		top: calc(6.25% + 40px);
+		bottom: calc(6.25% + 132px);
+		left: calc(6.25% + 96px);
+		right: calc(6.25% + 96px);
 		overflow-y: auto;
 		overflow-x: hidden;
 		display: flex;
@@ -865,37 +517,6 @@
 		min-width: 0;
 	}
 
-	.group-row {
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 4px;
-	}
-
-	.group-row .name { max-width: 100%; }
-
-	.sub,
-	.artist {
-		font-family: 'Noto Sans JP', sans-serif;
-		font-size: 12px;
-		letter-spacing: 0.06em;
-		opacity: 0.55;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-
-	.track-row .name { flex: 0 1 auto; }
-	.track-row .artist { flex: 1 1 0; min-width: 0; }
-	.track-row .time { margin-left: auto; padding-left: 12px; }
-
-	.no {
-		width: 1.8em;
-		flex-shrink: 0;
-		text-align: right;
-		font-size: 14px;
-		opacity: 0.55;
-	}
-
 	.time,
 	.clock {
 		font-size: 15px;
@@ -916,36 +537,9 @@
 		opacity: 1;
 	}
 
-	.no .dot { margin: 0; }
-
-	.head {
-		display: flex;
-		align-items: center;
-		gap: 22px;
-		padding: 0 0.6em;
-		flex-shrink: 0;
-	}
-
-	.head-text { min-width: 0; }
-
-	.head-title {
-		font-family: 'Kurale', serif;
-		font-size: 24px;
-		line-height: 1.2;
-		overflow-wrap: anywhere;
-	}
-
-	.head-sub {
-		margin-top: 6px;
-		font-family: 'Noto Sans JP', sans-serif;
-		font-size: 12px;
-		letter-spacing: 0.08em;
-		opacity: 0.6;
-	}
-
 	.song-row {
 		display: grid;
-		grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 1.2fr) 60px;
+		grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) 60px;
 		column-gap: 24px;
 		width: 100%;
 	}
@@ -1212,17 +806,22 @@
 		min-width: 0;
 	}
 
-	.queue-row .artist { margin-left: auto; padding-left: 12px; }
+	.queue-row .no {
+		width: 1.8em;
+		flex-shrink: 0;
+		text-align: right;
+		font-size: 14px;
+		opacity: 0.55;
+	}
 
-	.name-input {
-		width: 100%;
-		background: transparent;
-		border: none;
-		outline: none;
-		font-family: 'Kurale', serif;
-		font-size: 24px;
-		text-align: center;
-		color: var(--text);
+	.queue-row .artist {
+		font-family: 'Noto Sans JP', sans-serif;
+		font-size: 12px;
+		letter-spacing: 0.06em;
+		opacity: 0.55;
+		white-space: nowrap;
+		margin-left: auto;
+		padding-left: 12px;
 	}
 
 	.pop-note {
@@ -1231,13 +830,6 @@
 		opacity: 0.65;
 		text-align: center;
 		overflow-wrap: anywhere;
-	}
-
-	.pop-error {
-		font-family: 'Kurale', serif;
-		font-size: 15px;
-		color: #b04a45;
-		text-align: center;
 	}
 
 	.shortcuts {
