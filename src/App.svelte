@@ -323,7 +323,7 @@
 <button class="side boxed nav-next" onclick={() => api.next().then(refreshStatus)} title="Next (⌘→)">NEXT</button>
 
 <button class="side plain nav-info" onclick={() => (popup = 'info')} title="Info (I)">INFO</button>
-<button class="side plain nav-queue" onclick={openQueue} title="Up next (Q)">QUEUE</button>
+<button class="side plain nav-mini" onclick={() => setMini(true)} title="Mini player (M)">MINI</button>
 
 <!-- the search is the title -->
 <input bind:this={searchInput} bind:value={query} class="search" type="text" placeholder="Search" oninput={() => (ti = 0)} />
@@ -379,7 +379,6 @@
 		<button class="play" onclick={() => api.togglePlay().then(refreshStatus)} title="Play / pause (Space)">
 			<span class="ink-mark">{status.playing ? 'PAUSE' : 'PLAY'}</span>
 		</button>
-		<button class="mini-toggle" onclick={() => setMini(true)} title="Mini player (M)">MINI</button>
 	</div>
 </footer>
 
@@ -450,7 +449,7 @@
 	.nav-prev { left: calc(6.25% - 28px); top: 50%; transform: translateY(-50%); }
 	.nav-next { right: calc(6.25% - 28px); top: 50%; transform: translateY(-50%); }
 	.nav-info { left: calc(6.25% - 28px); bottom: 6.25%; width: 42px; }
-	.nav-queue { right: calc(6.25% - 28px); bottom: 6.25%; width: 42px; }
+	.nav-mini { right: calc(6.25% - 28px); bottom: 6.25%; width: 42px; }
 
 	/* ── search, in the place of a title ── */
 	.search {
@@ -660,7 +659,6 @@
 		width: 100%;
 	}
 
-	.mini-toggle,
 	.mini-btn,
 	.mini-expand {
 		background: transparent;
@@ -674,17 +672,9 @@
 		transition: opacity 200ms ease;
 	}
 
-	.mini-toggle:hover,
 	.mini-btn:hover,
 	.mini-expand:hover {
 		opacity: 1;
-	}
-
-	.mini-toggle {
-		position: absolute;
-		right: 0;
-		top: 50%;
-		transform: translateY(-50%);
 	}
 
 	/* ── mini player ── */
