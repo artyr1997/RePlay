@@ -767,17 +767,17 @@
 	}
 
 	/* ── side buttons ── */
-	.shuf { left: calc(6.25% - 28px); top: calc(6.25% + 8px); }
-	.rept { right: calc(6.25% - 28px); top: calc(6.25% + 8px); }
-	.nav-prev { left: calc(6.25% - 28px); top: 50%; transform: translateY(-50%); }
-	.nav-next { right: calc(6.25% - 28px); top: 50%; transform: translateY(-50%); }
-	.nav-info { left: calc(6.25% - 28px); bottom: 6.25%; width: 42px; }
-	.nav-queue { right: calc(6.25% - 28px); bottom: 6.25%; width: 42px; }
+	.shuf { left: var(--edge-x); top: calc(var(--edge-y) + 8px); }
+	.rept { right: var(--edge-x); top: calc(var(--edge-y) + 8px); }
+	.nav-prev { left: var(--edge-x); top: 50%; transform: translateY(-50%); }
+	.nav-next { right: var(--edge-x); top: 50%; transform: translateY(-50%); }
+	.nav-info { left: var(--edge-x); bottom: var(--edge-y); width: 42px; }
+	.nav-queue { right: var(--edge-x); bottom: var(--edge-y); width: 42px; }
 
 	/* ── tabs ── */
 	.tabs {
 		position: fixed;
-		top: calc(6.25% + 2px);
+		top: calc(var(--edge-y) + 2px);
 		left: 50%;
 		transform: translateX(-50%);
 		display: flex;
@@ -800,16 +800,16 @@
 	.tracks,
 	.songs {
 		position: absolute;
-		top: calc(6.25% + 72px);
-		bottom: calc(6.25% + 132px);
+		top: calc(var(--edge-y) + 72px);
+		bottom: calc(var(--edge-y) + 132px);
 		display: flex;
 		flex-direction: column;
 		gap: 18px;
 	}
 
 	.groups { left: calc(21.3% - 0.6em); width: 27%; }
-	.tracks { left: 54%; right: calc(6.25% + 64px); }
-	.songs { left: calc(6.25% + 96px); right: calc(6.25% + 96px); }
+	.tracks { left: 54%; right: calc(var(--edge-x) + 92px); }
+	.songs { left: calc(var(--edge-x) + 124px); right: calc(var(--edge-x) + 124px); }
 
 	.search {
 		width: 100%;
@@ -995,9 +995,9 @@
 	.player {
 		position: fixed;
 		left: 50%;
-		bottom: calc(6.25% - 14px);
+		bottom: calc(var(--edge-y) - 14px);
 		transform: translateX(-50%);
-		width: min(560px, calc(100% - 2 * (6.25% + 100px)));
+		width: min(560px, calc(100% - 2 * (var(--edge-x) + 128px)));
 		display: flex;
 		flex-direction: column;
 		align-items: center;
