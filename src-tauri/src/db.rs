@@ -152,6 +152,13 @@ impl Db {
             .map_err(err)
     }
 
+    pub fn track_id(&self, path: &str) -> Result<Option<i64>> {
+        self.conn
+            .query_row("SELECT id FROM tracks WHERE path = ?1", params![path], |r| r.get(0))
+            .optional()
+            .map_err(err)
+    }
+
     /// path → mtime of everything known, for incremental rescans.
     pub fn known_files(&self) -> Result<std::collections::HashMap<String, i64>> {
         let mut stmt = self.conn.prepare("SELECT path, mtime FROM tracks").map_err(err)?;

@@ -75,6 +75,31 @@ pub struct ScanResult {
 }
 
 /// Brings the library in line with `folder`. `progress(done, total)` is called as files are read.
+fn mtime(path: &Path) -> i64 {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Files opened from outside (ReFile, Finder): into the library as they are, their ids back in the same order.
+/// Those outside the music folder stay until the next rescan.
+pub fn add(db: &Db, paths: &[std::path::PathBuf]) -> Result<Vec<i64>, String> {
+    let mut known = db.known_files()?;
+    let mut ids = Vec::with_capacity(paths.len());
+    for path in paths {
+        let key = path.to_string_lossy().into_owned();
+        let mtime = mtime(path);
+        if known.remove(&key) != Some(mtime) {
+            db.upsert_track(&key, mtime, &read_info(path))?;
+        }
+        ids.extend(db.track_id(&key)?);
+    }
+    Ok(ids)
+}
+
 pub fn scan(db: &Db, folder: &Path, mut progress: impl FnMut(usize, usize)) -> Result<ScanResult, String> {
     let files: Vec<_> = WalkDir::new(folder)
         .follow_links(true)
@@ -89,12 +114,7 @@ pub fn scan(db: &Db, folder: &Path, mut progress: impl FnMut(usize, usize)) -> R
     db.begin()?;
     for (i, path) in files.iter().enumerate() {
         let key = path.to_string_lossy().into_owned();
-        let mtime = std::fs::metadata(path)
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        let mtime = mtime(path);
         if known.remove(&key) != Some(mtime) {
             db.upsert_track(&key, mtime, &read_info(path))?;
             result.added_or_updated += 1;

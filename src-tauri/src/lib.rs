@@ -84,6 +84,43 @@ fn queue_items(state: &AppState, ids: &[i64]) -> CmdResult<Vec<QueueItem>> {
     ids.iter().map(|&id| db.track(id).map(|t| QueueItem { id, path: PathBuf::from(t.path) })).collect()
 }
 
+/// Music opened from outside (ReFile, or Open With in Finder): the folder it's in becomes the queue,
+/// starting at it (several files opened at once: just those).
+fn open_files(app: &AppHandle, opened: Vec<PathBuf>) {
+    let opened: Vec<PathBuf> = opened.into_iter().filter(|p| scan::is_audio(p)).collect();
+    let Some(first) = opened.first().cloned() else { return };
+    let mut paths = if opened.len() > 1 {
+        opened
+    } else {
+        first
+            .parent()
+            .and_then(|dir| std::fs::read_dir(dir).ok())
+            .map(|dir| {
+                dir.filter_map(|e| e.ok().map(|e| e.path()))
+                    .filter(|p| p.is_file() && scan::is_audio(p))
+                    .filter(|p| !p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')))
+                    .collect()
+            })
+            .unwrap_or_else(|| vec![first.clone()])
+    };
+    paths.sort_by_key(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()));
+    let start = paths.iter().position(|p| *p == first).unwrap_or(0);
+
+    let state = app.state::<AppState>();
+    let ids = match state.db.lock().map_err(err).and_then(|db| scan::add(&db, &paths)) {
+        Ok(ids) => ids,
+        Err(e) => return eprintln!("ReSound: couldn't open {}: {e}", first.display()),
+    };
+    let Ok(items) = queue_items(&state, &ids) else { return };
+    let item = state.queue.lock().ok().and_then(|mut q| {
+        q.set(items, start);
+        q.current().cloned()
+    });
+    play_current(app, item);
+    // the library may have new tracks
+    let _ = app.emit("scan", serde_json::json!({ "finished": true }));
+}
+
 // ── library ──
 
 #[tauri::command]
@@ -360,6 +397,12 @@ pub fn run() {
             upcoming,
             reveal_in_finder,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running ReSound");
+        .build(tauri::generate_context!())
+        .expect("error while running ReSound")
+        .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Opened { urls } = event {
+                open_files(app, urls.iter().filter_map(|u| u.to_file_path().ok()).collect());
+            }
+        });
 }
