@@ -7,8 +7,9 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueueItem {
@@ -237,61 +238,142 @@ impl Audio {
     }
 }
 
+type Set<'a> = &'a dyn Fn(&dyn Fn(&mut AudioStatus));
+
+/// The Mac's sound output. Opened when there is something to play, not at start (the output may be
+/// switching then: headphones, a display's speakers), and opened again when it goes away.
+struct Output {
+    _device: rodio::MixerDeviceSink,
+    player: rodio::Player,
+    /// the device reported an error (unplugged, say): this output is done
+    lost: Arc<AtomicBool>,
+}
+
+impl Output {
+    fn open() -> Result<Self, String> {
+        let lost = Arc::new(AtomicBool::new(false));
+        let flag = lost.clone();
+        let mut device = rodio::DeviceSinkBuilder::from_default_device()
+            .and_then(|b| b.with_error_callback(move |_| flag.store(true, Ordering::Relaxed)).open_sink_or_fallback())
+            .or_else(|_| rodio::DeviceSinkBuilder::open_default_sink())
+            .map_err(|e| format!("No audio output: {e}"))?;
+        device.log_on_drop(false);
+        let player = rodio::Player::connect_new(device.mixer());
+        Ok(Self { _device: device, player, lost })
+    }
+
+    fn usable(&self) -> bool {
+        !self.lost.load(Ordering::Relaxed)
+    }
+}
+
+/// Puts `path` in the player from `at`, opening the output first if there is none (or it was lost).
+/// False when it can't: no output, or a file that won't decode (the status says which).
+fn start(output: &mut Option<Output>, path: &PathBuf, at: Duration, play: bool, set: Set) -> bool {
+    if !output.as_ref().is_some_and(Output::usable) {
+        *output = None;
+        match Output::open() {
+            Ok(o) => *output = Some(o),
+            Err(e) => {
+                set(&|s| s.error = Some(e.clone()));
+                return false;
+            }
+        }
+    }
+    let Some(out) = output.as_ref() else { return false };
+    // clearing also pauses
+    out.player.clear();
+    match decode(path) {
+        Ok(source) => {
+            out.player.append(source);
+            if at > Duration::ZERO {
+                let _ = out.player.try_seek(at);
+            }
+            if play {
+                out.player.play();
+            }
+            set(&|s| s.error = None);
+            true
+        }
+        Err(e) => {
+            let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            set(&|s| s.error = Some(format!("Can't play “{name}”: {e}")));
+            false
+        }
+    }
+}
+
 fn run(rx: Receiver<Cmd>, status: Arc<Mutex<AudioStatus>>, on_end: impl Fn()) {
     let set = |f: &dyn Fn(&mut AudioStatus)| {
         if let Ok(mut s) = status.lock() {
             f(&mut s);
         }
     };
-    let mut device = match rodio::DeviceSinkBuilder::open_default_sink() {
-        Ok(d) => d,
-        Err(e) => {
-            set(&|s| s.error = Some(format!("No audio output: {e}")));
-            return;
-        }
-    };
-    device.log_on_drop(false);
-    let player = rodio::Player::connect_new(device.mixer());
+    let mut output: Option<Output> = None;
+    // the track and where it is, to carry on with after the output had to be opened again
+    let mut track: Option<PathBuf> = None;
+    let mut position = Duration::ZERO;
     // a track is loaded and hasn't ended yet
     let mut loaded = false;
+    // a lost output is reopened at most once a second
+    let mut retry_at = Instant::now();
 
     loop {
+        // the output went away while playing (headphones out): carry on with what there is now
+        if loaded && output.as_ref().is_some_and(|o| !o.usable()) && Instant::now() >= retry_at {
+            retry_at = Instant::now() + Duration::from_secs(1);
+            let playing = output.as_ref().is_some_and(|o| !o.player.is_paused());
+            if let Some(path) = track.clone() {
+                loaded = start(&mut output, &path, position, playing, &set);
+            }
+        }
+
         match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(Cmd::Load { path, autoplay }) => {
-                player.clear();
-                match decode(&path) {
-                    Ok(source) => {
-                        player.append(source);
-                        if autoplay {
-                            player.play();
-                        }
-                        loaded = true;
-                        set(&|s| s.error = None);
-                    }
-                    Err(e) => {
-                        loaded = false;
-                        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                        set(&|s| s.error = Some(format!("Can't play “{name}”: {e}")));
+                track = Some(path.clone());
+                position = Duration::ZERO;
+                loaded = start(&mut output, &path, Duration::ZERO, autoplay, &set);
+            }
+            Ok(Cmd::Play) => match output.as_ref() {
+                Some(o) if o.usable() && loaded => o.player.play(),
+                // no output yet, or it failed before: try again with the track where it was
+                _ => {
+                    if let Some(path) = track.clone() {
+                        loaded = start(&mut output, &path, position, true, &set);
                     }
                 }
+            },
+            Ok(Cmd::Pause) => {
+                if let Some(o) = &output {
+                    o.player.pause();
+                }
             }
-            Ok(Cmd::Play) => player.play(),
-            Ok(Cmd::Pause) => player.pause(),
             Ok(Cmd::Seek(to)) => {
-                let _ = player.try_seek(to);
+                position = to;
+                if let Some(o) = &output {
+                    let _ = o.player.try_seek(to);
+                }
             }
             Ok(Cmd::Stop) => {
-                player.clear();
+                if let Some(o) = &output {
+                    o.player.clear();
+                }
+                track = None;
+                position = Duration::ZERO;
                 loaded = false;
             }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return,
         }
 
-        let finished = loaded && !player.is_paused() && player.empty();
+        let player = output.as_ref().map(|o| &o.player);
+        if loaded && let Some(p) = player {
+            position = p.get_pos();
+        }
+        let finished = loaded && player.is_some_and(|p| !p.is_paused() && p.empty());
         set(&|s| {
-            s.playing = loaded && !player.is_paused() && !player.empty();
-            s.position_ms = if loaded { player.get_pos().as_millis() as u64 } else { 0 };
+            s.playing = loaded && player.is_some_and(|p| !p.is_paused() && !p.empty());
+            s.position_ms = if loaded { position.as_millis() as u64 } else { 0 };
         });
         if finished {
             loaded = false;
