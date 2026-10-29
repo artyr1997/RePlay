@@ -505,7 +505,7 @@
 		font-family: 'Kurale', serif;
 		font-size: 16px;
 		line-height: 1.2;
-		cursor: url('/ink/hand.svg'), pointer;
+		cursor: pointer;
 		scroll-margin: 56px 0;
 	}
 
@@ -581,7 +581,7 @@
 
 	.welcome .pop-btn,
 	.player .play {
-		cursor: url('/ink/hand.svg'), pointer;
+		cursor: pointer;
 	}
 
 	/* ── player ── */
@@ -625,7 +625,7 @@
 		background: transparent;
 		border: none;
 		padding: 0;
-		cursor: url('/ink/hand.svg'), pointer;
+		cursor: pointer;
 	}
 
 	.bar-line,
@@ -668,7 +668,7 @@
 		font-size: 12px;
 		letter-spacing: 0.3em;
 		opacity: 0.6;
-		cursor: url('/ink/hand.svg'), pointer;
+		cursor: pointer;
 		transition: opacity 200ms ease;
 	}
 
@@ -775,7 +775,7 @@
 		font-size: 16px;
 		line-height: 1.2;
 		text-align: left;
-		cursor: url('/ink/hand.svg'), pointer;
+		cursor: pointer;
 	}
 
 	.queue {
