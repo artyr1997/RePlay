@@ -609,7 +609,7 @@
 
 	.now-artist { opacity: 0.6; }
 	.now.idle { opacity: 0.45; }
-	.now.error { font-size: 15px; color: #b04a45; }
+	.now.error { font-size: 15px; color: var(--error); }
 
 	.progress-row {
 		width: 100%;
@@ -708,7 +708,7 @@
 	}
 
 	.mini-title.idle { opacity: 0.45; }
-	.mini-title.error { font-size: 15px; color: #b04a45; }
+	.mini-title.error { font-size: 15px; color: var(--error); }
 
 	.mini-artist {
 		max-width: 100%;
