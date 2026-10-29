@@ -84,9 +84,18 @@ fn queue_items(state: &AppState, ids: &[i64]) -> CmdResult<Vec<QueueItem>> {
     ids.iter().map(|&id| db.track(id).map(|t| QueueItem { id, path: PathBuf::from(t.path) })).collect()
 }
 
+/// Files that open ReSound arrive before setup has opened the library: they wait here for it.
+static WAITING: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
 /// Music opened from outside (ReFile, or Open With in Finder): the folder it's in becomes the queue,
 /// starting at it (several files opened at once: just those).
 fn open_files(app: &AppHandle, opened: Vec<PathBuf>) {
+    if app.try_state::<AppState>().is_none() {
+        if let Ok(mut waiting) = WAITING.lock() {
+            waiting.extend(opened);
+        }
+        return;
+    }
     let opened: Vec<PathBuf> = opened.into_iter().filter(|p| scan::is_audio(p)).collect();
     let Some(first) = opened.first().cloned() else { return };
     let mut paths = if opened.len() > 1 {
@@ -369,6 +378,10 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             if let Some(window) = app.get_webview_window("main") {
                 hide_native_window_buttons(&window);
+            }
+            let waiting = WAITING.lock().map(|mut w| std::mem::take(&mut *w)).unwrap_or_default();
+            if !waiting.is_empty() {
+                open_files(app.handle(), waiting);
             }
             Ok(())
         })
