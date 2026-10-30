@@ -13,6 +13,7 @@
     "windows": [
       {
         "label": "main",
+        "visible": false,
         "title": "ReSound",
         "width": 1440,
         "height": 900,
