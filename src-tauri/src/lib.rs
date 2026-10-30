@@ -349,10 +349,10 @@ fn round_window(window: &tauri::WebviewWindow) {
     });
 }
 
-/// The window starts hidden (tauri.conf.json) and fades in once its page has loaded, so the app
-/// opens softly instead of appearing at once.
+/// The window starts hidden (tauri.conf.json) and fades in once the interface has drawn itself
+/// (window_ready), so the app opens softly instead of appearing empty.
 #[cfg(target_os = "macos")]
-fn fade_in(window: &tauri::WebviewWindow) {
+fn fade_in(window: &tauri::Window) {
     use objc2::runtime::AnyObject;
     use objc2::{class, msg_send};
 
@@ -373,7 +373,7 @@ fn fade_in(window: &tauri::WebviewWindow) {
     unsafe {
         let _: () = msg_send![class!(NSAnimationContext), beginGrouping];
         let context: *mut AnyObject = msg_send![class!(NSAnimationContext), currentContext];
-        let _: () = msg_send![context, setDuration: 0.45f64];
+        let _: () = msg_send![context, setDuration: 0.3f64];
         let name: *mut AnyObject = msg_send![class!(NSString), stringWithUTF8String: c"easeOut".as_ptr()];
         let timing: *mut AnyObject = msg_send![class!(CAMediaTimingFunction), functionWithName: name];
         let _: () = msg_send![context, setTimingFunction: timing];
@@ -383,8 +383,8 @@ fn fade_in(window: &tauri::WebviewWindow) {
     }
 }
 
-/// Fades the window in on the main thread; `after` waits first (the fallback, should the page never load).
-fn reveal(window: &tauri::WebviewWindow, after: std::time::Duration) {
+/// Fades the window in on the main thread; `after` waits first (the fallback, should the interface never say it is ready).
+fn reveal(window: &tauri::Window, after: std::time::Duration) {
     let window = window.clone();
     std::thread::spawn(move || {
         std::thread::sleep(after);
@@ -398,17 +398,16 @@ fn reveal(window: &tauri::WebviewWindow, after: std::time::Duration) {
     });
 }
 
+/// The interface has drawn itself (main.ts): the window can fade in.
+#[tauri::command]
+fn window_ready(webview: tauri::Webview) {
+    // the webview's window: ReSurf's holds its tabs' webviews too
+    reveal(&webview.window(), std::time::Duration::ZERO);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .on_page_load(|webview, payload| {
-            use tauri::Manager;
-            if webview.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
-                if let Some(window) = webview.app_handle().get_webview_window("main") {
-                    reveal(&window, std::time::Duration::ZERO);
-                }
-            }
-        })
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
@@ -441,7 +440,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             if let Some(window) = app.get_webview_window("main") {
                 round_window(&window);
-                reveal(&window, std::time::Duration::from_secs(4));
+                reveal(&window.as_ref().window(), std::time::Duration::from_secs(3));
             }
             let waiting = WAITING.lock().map(|mut w| std::mem::take(&mut *w)).unwrap_or_default();
             if !waiting.is_empty() {
@@ -450,6 +449,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            window_ready,
             music_folder,
             set_music_folder,
             rescan,
