@@ -1,6 +1,6 @@
 //! Playback: a queue (order, shuffle, repeat) and an audio thread that plays files
-//! with rodio. The next track starts from Rust itself, so music keeps going even
-//! when the window is hidden.
+//! with rodio, or a radio station's stream (radio.rs). The next track starts from Rust
+//! itself, so music keeps going even when the window is hidden.
 
 use serde::Serialize;
 use std::fs::File;
@@ -174,6 +174,8 @@ impl Queue {
 
 enum Cmd {
     Load { path: PathBuf, autoplay: bool },
+    /// a radio station: live, so a pause lets it go and playing again tunes in afresh
+    Stream { url: String },
     Play,
     Pause,
     Seek(Duration),
@@ -187,6 +189,10 @@ pub struct AudioStatus {
     pub playing: bool,
     pub position_ms: u64,
     pub error: Option<String>,
+    /// a station is on (playing or paused)
+    pub live: bool,
+    /// the song on air, as the station names it
+    pub on_air: Option<String>,
 }
 
 pub struct Audio {
@@ -223,6 +229,9 @@ impl Audio {
 
     pub fn load(&self, path: PathBuf, autoplay: bool) {
         let _ = self.tx.send(Cmd::Load { path, autoplay });
+    }
+    pub fn stream(&self, url: String) {
+        let _ = self.tx.send(Cmd::Stream { url });
     }
     pub fn play(&self) {
         let _ = self.tx.send(Cmd::Play);
@@ -267,20 +276,25 @@ impl Output {
     }
 }
 
-/// Puts `path` in the player from `at`, opening the output first if there is none (or it was lost).
-/// False when it can't: no output, or a file that won't decode (the status says which).
-fn start(output: &mut Option<Output>, path: &PathBuf, at: Duration, play: bool, set: Set) -> bool {
+/// The output, opened first if there is none (or it was lost); none when it can't be (the status says so).
+fn ready<'a>(output: &'a mut Option<Output>, set: Set) -> Option<&'a Output> {
     if !output.as_ref().is_some_and(Output::usable) {
         *output = None;
         match Output::open() {
             Ok(o) => *output = Some(o),
             Err(e) => {
                 set(&|s| s.error = Some(e.clone()));
-                return false;
+                return None;
             }
         }
     }
-    let Some(out) = output.as_ref() else { return false };
+    output.as_ref()
+}
+
+/// Puts `path` in the player from `at`, opening the output first if needed.
+/// False when it can't: no output, or a file that won't decode (the status says which).
+fn start(output: &mut Option<Output>, path: &PathBuf, at: Duration, play: bool, set: Set) -> bool {
+    let Some(out) = ready(output, set) else { return false };
     // clearing also pauses
     out.player.clear();
     match decode(path) {
@@ -303,6 +317,37 @@ fn start(output: &mut Option<Output>, path: &PathBuf, at: Duration, play: bool, 
     }
 }
 
+/// Tunes in to a station and plays it. False when it can't (the status says why).
+fn tune(output: &mut Option<Output>, url: &str, status: &Arc<Mutex<AudioStatus>>, set: Set) -> bool {
+    let Some(out) = ready(output, set) else { return false };
+    out.player.clear();
+    let shared = status.clone();
+    let on_title = move |title: Option<String>| {
+        if let Ok(mut s) = shared.lock() {
+            s.on_air = title;
+        }
+    };
+    let played = crate::radio::open(url, on_title).and_then(|(stream, hint)| {
+        let mut builder = rodio::Decoder::builder().with_data(stream).with_seekable(false);
+        if let Some(hint) = hint {
+            builder = builder.with_hint(hint);
+        }
+        builder.build().map_err(|e| format!("Can't play the station: {e}"))
+    });
+    match played {
+        Ok(source) => {
+            out.player.append(source);
+            out.player.play();
+            set(&|s| s.error = None);
+            true
+        }
+        Err(e) => {
+            set(&|s| s.error = Some(e.clone()));
+            false
+        }
+    }
+}
+
 fn run(rx: Receiver<Cmd>, status: Arc<Mutex<AudioStatus>>, on_end: impl Fn()) {
     let set = |f: &dyn Fn(&mut AudioStatus)| {
         if let Ok(mut s) = status.lock() {
@@ -312,6 +357,8 @@ fn run(rx: Receiver<Cmd>, status: Arc<Mutex<AudioStatus>>, on_end: impl Fn()) {
     let mut output: Option<Output> = None;
     // the track and where it is, to carry on with after the output had to be opened again
     let mut track: Option<PathBuf> = None;
+    // or the station that is on
+    let mut station: Option<String> = None;
     let mut position = Duration::ZERO;
     // a track is loaded and hasn't ended yet
     let mut loaded = false;
@@ -323,7 +370,9 @@ fn run(rx: Receiver<Cmd>, status: Arc<Mutex<AudioStatus>>, on_end: impl Fn()) {
         if loaded && output.as_ref().is_some_and(|o| !o.usable()) && Instant::now() >= retry_at {
             retry_at = Instant::now() + Duration::from_secs(1);
             let playing = output.as_ref().is_some_and(|o| !o.player.is_paused());
-            if let Some(path) = track.clone() {
+            if let Some(url) = station.clone() {
+                loaded = tune(&mut output, &url, &status, &set);
+            } else if let Some(path) = track.clone() {
                 loaded = start(&mut output, &path, position, playing, &set);
             }
         }
@@ -331,27 +380,46 @@ fn run(rx: Receiver<Cmd>, status: Arc<Mutex<AudioStatus>>, on_end: impl Fn()) {
         match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(Cmd::Load { path, autoplay }) => {
                 track = Some(path.clone());
+                station = None;
                 position = Duration::ZERO;
+                set(&|s| s.on_air = None);
                 loaded = start(&mut output, &path, Duration::ZERO, autoplay, &set);
+            }
+            Ok(Cmd::Stream { url }) => {
+                track = None;
+                station = Some(url.clone());
+                position = Duration::ZERO;
+                set(&|s| s.on_air = None);
+                loaded = tune(&mut output, &url, &status, &set);
             }
             Ok(Cmd::Play) => match output.as_ref() {
                 Some(o) if o.usable() && loaded => o.player.play(),
-                // no output yet, or it failed before: try again with the track where it was
+                // no output yet, or it failed before, or a station let go at a pause: again
                 _ => {
-                    if let Some(path) = track.clone() {
+                    if let Some(url) = station.clone() {
+                        loaded = tune(&mut output, &url, &status, &set);
+                    } else if let Some(path) = track.clone() {
                         loaded = start(&mut output, &path, position, true, &set);
                     }
                 }
             },
             Ok(Cmd::Pause) => {
                 if let Some(o) = &output {
-                    o.player.pause();
+                    if station.is_some() {
+                        // live: what was said while paused is gone; let the stream go
+                        o.player.clear();
+                        loaded = false;
+                    } else {
+                        o.player.pause();
+                    }
                 }
             }
             Ok(Cmd::Seek(to)) => {
-                position = to;
-                if let Some(o) = &output {
-                    let _ = o.player.try_seek(to);
+                if station.is_none() {
+                    position = to;
+                    if let Some(o) = &output {
+                        let _ = o.player.try_seek(to);
+                    }
                 }
             }
             Ok(Cmd::Stop) => {
@@ -359,25 +427,34 @@ fn run(rx: Receiver<Cmd>, status: Arc<Mutex<AudioStatus>>, on_end: impl Fn()) {
                     o.player.clear();
                 }
                 track = None;
+                station = None;
                 position = Duration::ZERO;
                 loaded = false;
+                set(&|s| s.on_air = None);
             }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return,
         }
 
         let player = output.as_ref().map(|o| &o.player);
-        if loaded && let Some(p) = player {
+        let live = station.is_some();
+        if loaded && !live && let Some(p) = player {
             position = p.get_pos();
         }
         let finished = loaded && player.is_some_and(|p| !p.is_paused() && p.empty());
         set(&|s| {
             s.playing = loaded && player.is_some_and(|p| !p.is_paused() && !p.empty());
-            s.position_ms = if loaded { position.as_millis() as u64 } else { 0 };
+            s.position_ms = if loaded && !live { position.as_millis() as u64 } else { 0 };
+            s.live = live;
         });
         if finished {
             loaded = false;
-            on_end();
+            if live {
+                // a station doesn't end: the network or the station stopped
+                set(&|s| s.error = Some("The station went quiet.".into()));
+            } else {
+                on_end();
+            }
         }
     }
 }

@@ -22,8 +22,22 @@ export interface Playlist {
 
 export type Repeat = 'off' | 'all' | 'one';
 
+/** A radio station (from Radio Browser, see src-tauri/src/radio.rs) */
+export interface Station {
+	uuid: string;
+	name: string;
+	url: string;
+	country: string;
+	codec: string;
+	bitrate: number;
+}
+
 export interface Status {
 	track: Track | null;
+	/** a station instead of a song */
+	station: Station | null;
+	/** the song on air, as the station names it */
+	onAir: string | null;
 	playing: boolean;
 	positionMs: number;
 	shuffle: boolean;
@@ -57,6 +71,13 @@ export const api = {
 	status: () => invoke<Status>('player_status'),
 	upcoming: () => invoke<Track[]>('upcoming'),
 	reveal: (path: string) => invoke<void>('reveal_in_finder', { path }),
+
+	radioGenres: () => invoke<string[]>('radio_genres'),
+	radioStations: (genre: string) => invoke<Station[]>('radio_stations', { genre }),
+	radioSearch: (query: string) => invoke<Station[]>('radio_search', { query }),
+	radioFavorites: () => invoke<Station[]>('radio_favorites'),
+	setRadioFavorite: (station: Station, on: boolean) => invoke<void>('set_radio_favorite', { station, on }),
+	playStation: (station: Station, list: Station[]) => invoke<void>('play_station', { station, list }),
 };
 
 /** 3:07, 1:02:45 */

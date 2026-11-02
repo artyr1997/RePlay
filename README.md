@@ -5,6 +5,7 @@ folder, keeps the library and playlists in SQLite and plays the audio (rodio); t
 interface is Svelte.
 
 - **Albums · Artists · Songs · Lists**: two columns (group → songs), or a song list
+- **Radio** (2, or RADIO under the search; 1 or SONGS back): stations from Radio Browser (radio-browser.info), genres on the left and their stations on the right (← → between them), / searches station names. Enter plays one; the player shows the song on air and LIVE; PREV / NEXT go along the list; a pause lets the station go and PLAY tunes in again. F (or a right click) keeps a station in Favorites. MP3, AAC and Ogg Vorbis streams.
 - **Player**: PLAY / PAUSE, PREV / NEXT, SHUF, REPT (all / one), QUEUE (up next),
   click the line to seek. The next song starts from Rust, also with the window hidden.
 - **Playlists**: create, rename, delete; add songs or whole albums; remove songs

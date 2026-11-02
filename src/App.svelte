@@ -6,7 +6,7 @@
 	import WindowControls from './lib/WindowControls.svelte';
 	import Popup from './lib/Popup.svelte';
 	import { scrollFade } from './lib/scrollFade';
-	import { api, songs, matches, formatTime, type Track, type Status } from './lib/music';
+	import { api, songs, matches, formatTime, type Track, type Status, type Station } from './lib/music';
 
 	type PopupKind = 'none' | 'actions' | 'queue' | 'info';
 
@@ -30,7 +30,7 @@
 		await getCurrentWindow().setSize(new LogicalSize(size.width, size.height));
 	}
 
-	let status: Status = $state({ track: null, playing: false, positionMs: 0, shuffle: false, repeat: 'off', error: null });
+	let status: Status = $state({ track: null, station: null, onAir: null, playing: false, positionMs: 0, shuffle: false, repeat: 'off', error: null });
 
 	let searchInput: HTMLInputElement | undefined = $state();
 	let trackList: HTMLDivElement | undefined = $state();
@@ -80,6 +80,132 @@
 	}
 
 	let progress = $derived(status.track && status.track.durationMs ? Math.min(1, status.positionMs / status.track.durationMs) : 0);
+
+	// ── radio: genres on the left, their stations on the right (Radio Browser's, through Rust) ──
+
+	type Mode = 'songs' | 'radio';
+	let mode = $state<Mode>('songs');
+	const FAVORITES = 'Favorites';
+	let genres: string[] = $state([]);
+	let favorites: Station[] = $state([]);
+	let gi = $state(0);
+	let si = $state(0);
+	/** which column the arrows move in */
+	let side = $state<'genres' | 'stations'>('genres');
+	let byGenre: Record<string, Station[]> = $state({});
+	let found: Station[] = $state([]);
+	let radioLoading = $state(false);
+	let radioError = $state('');
+	let genreList: HTMLDivElement | undefined = $state();
+	let stationList: HTMLDivElement | undefined = $state();
+
+	let genreNames = $derived(favorites.length ? [FAVORITES, ...genres] : genres);
+	let genre = $derived(genreNames[gi] ?? '');
+	let stations: Station[] = $derived(q ? found : genre === FAVORITES ? favorites : (byGenre[genre] ?? []));
+	let station: Station | undefined = $derived(stations[si]);
+	let kept = $derived(new Set(favorites.map(s => s.uuid)));
+
+	async function setMode(next: Mode) {
+		if (mode === next) return;
+		mode = next;
+		query = '';
+		if (next === 'radio' && !genres.length) {
+			[genres, favorites] = await Promise.all([api.radioGenres(), api.radioFavorites()]);
+			gi = 0;
+			await loadGenre();
+		}
+	}
+
+	async function loadGenre() {
+		si = 0;
+		const name = genre;
+		if (!name || name === FAVORITES || byGenre[name]) return;
+		radioLoading = true;
+		radioError = '';
+		try {
+			byGenre[name] = await api.radioStations(name);
+		} catch (e) {
+			radioError = String(e);
+		} finally {
+			radioLoading = false;
+		}
+	}
+
+	// the search, in radio: station names, asked a moment after the typing stops
+	let searchTimer: ReturnType<typeof setTimeout> | null = null;
+	$effect(() => {
+		const text = q;
+		if (mode !== 'radio') return;
+		if (searchTimer) clearTimeout(searchTimer);
+		if (!text) return void (found = []);
+		searchTimer = setTimeout(async () => {
+			radioLoading = true;
+			radioError = '';
+			try {
+				found = await api.radioSearch(text);
+				si = 0;
+				side = 'stations';
+			} catch (e) {
+				radioError = String(e);
+			} finally {
+				radioLoading = false;
+			}
+		}, 400);
+	});
+
+	async function playStation(index = si) {
+		const s = stations[index];
+		if (!s) return;
+		si = index;
+		await api.playStation(s, stations);
+		await refreshStatus();
+	}
+
+	async function toggleFavorite(s: Station | undefined = station) {
+		if (!s) return;
+		const on = !kept.has(s.uuid);
+		await api.setRadioFavorite(s, on);
+		const wasFavorites = genre === FAVORITES;
+		favorites = await api.radioFavorites();
+		// the left column may have gained or lost Favorites: stay on the same genre
+		if (!wasFavorites) gi = Math.max(0, genreNames.indexOf(genre));
+		else if (!favorites.length) gi = 0;
+		showToast(on ? 'KEPT' : 'LET GO');
+	}
+
+	async function moveRadio(delta: number) {
+		if (side === 'genres' && !q) {
+			if (!genreNames.length) return;
+			gi = (gi + delta + genreNames.length) % genreNames.length;
+			await loadGenre();
+			await tick();
+			genreList?.querySelector('.row.active')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+		} else {
+			if (!stations.length) return;
+			si = (si + delta + stations.length) % stations.length;
+			await tick();
+			stationList?.querySelector('.row.active')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+		}
+	}
+
+	function radioKeys(e: KeyboardEvent): boolean {
+		if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+			moveRadio(e.key === 'ArrowDown' ? 1 : -1);
+		} else if (e.key === 'ArrowRight') {
+			side = 'stations';
+		} else if (e.key === 'ArrowLeft' && !q) {
+			side = 'genres';
+		} else if (e.key === 'Enter') {
+			if (side === 'genres' && !q) side = 'stations';
+			else playStation();
+		} else if (e.code === 'KeyF') {
+			toggleFavorite();
+		} else {
+			return false;
+		}
+		e.preventDefault();
+		return true;
+	}
 
 	// ── selection ──
 
@@ -189,6 +315,13 @@
 		}
 
 		if (e.target === searchInput) {
+			if (mode === 'radio' && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter')) {
+				e.preventDefault();
+				side = 'stations';
+				if (e.key === 'Enter') playStation();
+				else moveRadio(e.key === 'ArrowDown' ? 1 : -1);
+				return;
+			}
 			if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
 				e.preventDefault();
 				move(e.key === 'ArrowDown' ? 1 : -1);
@@ -202,6 +335,12 @@
 			return;
 		}
 		if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+
+		if (!mod && (e.key === '1' || e.key === '2')) {
+			setMode(e.key === '1' ? 'songs' : 'radio');
+			return;
+		}
+		if (mode === 'radio' && !mod && radioKeys(e)) return;
 
 		if (mod && e.key === 'ArrowRight') {
 			e.preventDefault();
@@ -263,6 +402,9 @@
 		['↑ ↓', 'Move around'],
 		['Enter', 'Play'],
 		['/', 'Search'],
+		['1 / 2', 'Songs / radio'],
+		['← →', 'Genres / stations (radio)'],
+		['F', 'Keep a station'],
 		['S / R', 'Shuffle / repeat'],
 		['Q', 'Up next'],
 		['E / right click', 'Actions'],
@@ -289,20 +431,27 @@
 		<button class="mini-expand" onclick={() => setMini(false)} title="Library (M)">LIBRARY</button>
 		{#if status.error}
 			<p class="mini-title error">{status.error}</p>
+		{:else if status.station}
+			<p class="mini-title">{status.onAir ?? status.station.name}</p>
+			<p class="mini-artist">{status.onAir ? status.station.name : status.station.country}</p>
 		{:else if status.track}
 			<p class="mini-title">{status.track.title}</p>
 			<p class="mini-artist">{status.track.artist || status.track.albumArtist}</p>
 		{:else}
 			<p class="mini-title idle">Nothing playing.</p>
 		{/if}
-		<div class="progress-row mini-progress">
-			<span class="clock">{formatTime(status.positionMs)}</span>
-			<button class="bar" onclick={seekTo} aria-label="Seek" disabled={!status.track}>
-				<span class="bar-line"></span>
-				<span class="bar-fill" style="width: {progress * 100}%"></span>
-			</button>
-			<span class="clock">{formatTime(status.track?.durationMs ?? 0)}</span>
-		</div>
+		{#if status.station}
+			<p class="live mini-progress">LIVE</p>
+		{:else}
+			<div class="progress-row mini-progress">
+				<span class="clock">{formatTime(status.positionMs)}</span>
+				<button class="bar" onclick={seekTo} aria-label="Seek" disabled={!status.track}>
+					<span class="bar-line"></span>
+					<span class="bar-fill" style="width: {progress * 100}%"></span>
+				</button>
+				<span class="clock">{formatTime(status.track?.durationMs ?? 0)}</span>
+			</div>
+		{/if}
 		<div class="mini-controls">
 			<button class="mini-btn" onclick={() => api.previous().then(refreshStatus)} title="Previous (←)">PREV</button>
 			<button class="play" onclick={() => api.togglePlay().then(refreshStatus)} title="Play / pause (Space)">
@@ -314,8 +463,9 @@
 {:else}
 
 <!-- shuffle / repeat: inked with a vertical stroke when on -->
-<button class="side switch shuf" class:ink-mark-v={status.shuffle} onclick={toggleShuffle} title="Shuffle (S)">SHUF</button>
-<button class="side switch rept" class:ink-mark-v={status.repeat !== 'off'} onclick={cycleRepeat} title="Repeat (R)">
+<!-- (a station has neither: they rest while one is on) -->
+<button class="side switch shuf" class:ink-mark-v={status.shuffle} class:rest={!!status.station} onclick={toggleShuffle} title="Shuffle (S)">SHUF</button>
+<button class="side switch rept" class:ink-mark-v={status.repeat !== 'off'} class:rest={!!status.station} onclick={cycleRepeat} title="Repeat (R)">
 	{status.repeat === 'one' ? 'ONE' : 'REPT'}
 </button>
 
@@ -326,10 +476,51 @@
 <button class="side plain nav-mini" onclick={() => setMini(true)} title="Mini player (M)">MINI</button>
 
 <!-- the search is the title -->
-<input bind:this={searchInput} bind:value={query} class="search" type="text" placeholder="Search" oninput={() => (ti = 0)} />
+<input bind:this={searchInput} bind:value={query} class="search" type="text" placeholder={mode === 'radio' ? 'Search stations' : 'Search'} oninput={() => (ti = 0)} />
+
+<!-- songs or the radio, under the search -->
+<nav class="modes">
+	<button onclick={() => setMode('songs')} title="Songs (1)"><span class:ink-mark={mode === 'songs'}>SONGS</span></button>
+	<button onclick={() => setMode('radio')} title="Radio (2)"><span class:ink-mark={mode === 'radio'}>RADIO</span></button>
+</nav>
 
 <main class="fade-in">
-	{#if loaded && allTracks.length === 0 && !scan}
+	{#if mode === 'radio'}
+		<div class="radio">
+			<div class="genres scroll" class:dim={!!q} bind:this={genreList} use:scrollFade>
+				{#each genreNames as name, i (name)}
+					<button
+						class="row genre-row"
+						class:active={i === gi}
+						onclick={() => { gi = i; side = 'genres'; query = ''; loadGenre(); }}
+					>
+						<span class="name" class:ink-mark={i === gi && side === 'genres' && !q} class:chosen={i === gi}>{name}</span>
+					</button>
+				{/each}
+			</div>
+			<div class="stations scroll" bind:this={stationList} use:scrollFade>
+				{#each stations as s, i (s.uuid)}
+					<button
+						class="row station-row"
+						class:active={i === si}
+						onclick={() => { si = i; side = 'stations'; }}
+						ondblclick={() => playStation(i)}
+						oncontextmenu={() => { si = i; toggleFavorite(s); }}
+					>
+						<span class="cell-title">
+							{#if status.station?.uuid === s.uuid}<span class="dot"></span>{/if}
+							<span class="name" class:ink-mark={i === si && side === 'stations'}>{s.name}</span>
+							{#if kept.has(s.uuid) && genre !== FAVORITES}<span class="kept" title="Kept (F)">◆</span>{/if}
+						</span>
+						<span class="cell">{s.country}</span>
+						<span class="cell kind">{s.codec} {s.bitrate || ''}</span>
+					</button>
+				{:else}
+					<p class="empty">{radioLoading ? 'Tuning in…' : radioError || (q ? 'Nothing found.' : genre === FAVORITES ? 'No stations kept yet.' : 'No stations.')}</p>
+				{/each}
+			</div>
+		</div>
+	{:else if loaded && allTracks.length === 0 && !scan}
 		<div class="welcome">
 			<p>No music in <span class="ink-mark">{folder ? folder.split('/').pop() : 'your folder'}</span> yet.</p>
 			<button class="pop-btn" onclick={chooseFolder}>CHOOSE FOLDER</button>
@@ -362,19 +553,29 @@
 <footer class="player">
 	{#if status.error}
 		<p class="now error">{status.error}</p>
+	{:else if status.station}
+		<!-- the song on air when the station names it, and the station -->
+		<p class="now">
+			{#if status.onAir}<span class="now-title">{status.onAir}</span><span class="now-artist"> — {status.station.name}</span>
+			{:else}<span class="now-title">{status.station.name}</span>{/if}
+		</p>
 	{:else if status.track}
 		<p class="now"><span class="now-title">{status.track.title}</span><span class="now-artist"> — {status.track.artist || status.track.albumArtist}</span></p>
 	{:else}
 		<p class="now idle">Nothing playing.</p>
 	{/if}
-	<div class="progress-row">
-		<span class="clock">{formatTime(status.positionMs)}</span>
-		<button class="bar" onclick={seekTo} aria-label="Seek" disabled={!status.track}>
-			<span class="bar-line"></span>
-			<span class="bar-fill" style="width: {progress * 100}%"></span>
-		</button>
-		<span class="clock">{formatTime(status.track?.durationMs ?? 0)}</span>
-	</div>
+	{#if status.station}
+		<p class="live">LIVE</p>
+	{:else}
+		<div class="progress-row">
+			<span class="clock">{formatTime(status.positionMs)}</span>
+			<button class="bar" onclick={seekTo} aria-label="Seek" disabled={!status.track}>
+				<span class="bar-line"></span>
+				<span class="bar-fill" style="width: {progress * 100}%"></span>
+			</button>
+			<span class="clock">{formatTime(status.track?.durationMs ?? 0)}</span>
+		</div>
+	{/if}
 	<div class="player-controls">
 		<button class="play" onclick={() => api.togglePlay().then(refreshStatus)} title="Play / pause (Space)">
 			<span class="ink-mark">{status.playing ? 'PAUSE' : 'PLAY'}</span>
@@ -475,11 +676,93 @@
 		opacity: 0.5;
 	}
 
+	/* ── songs or radio: two words under the search ── */
+	.modes {
+		position: fixed;
+		top: 76px;
+		left: 50%;
+		transform: translateX(-50%);
+		display: flex;
+		gap: 2.4rem;
+		z-index: 5;
+	}
+
+	.modes button {
+		background: transparent;
+		border: none;
+		padding: 0.2em 0.4em;
+		font-family: 'Noto Sans JP', sans-serif;
+		font-size: 12px;
+		letter-spacing: 0.3em;
+		opacity: 0.75;
+		cursor: pointer;
+		transition: opacity 200ms ease;
+	}
+
+	.modes button:hover { opacity: 1; }
+	.modes .ink-mark { padding-right: calc(0.45em - 0.3em); }
+
+	/* shuffle and repeat rest while a station is on */
+	.side.rest { opacity: 0.3; pointer-events: none; }
+
+	/* ── radio: genres | stations ── */
+	.radio {
+		position: absolute;
+		top: calc(6.25% + 72px);
+		bottom: calc(6.25% + 132px);
+		left: calc(6.25% + 96px);
+		right: calc(6.25% + 96px);
+		display: grid;
+		grid-template-columns: 200px minmax(0, 1fr);
+		column-gap: 48px;
+	}
+
+	.genres,
+	.stations {
+		overflow-y: auto;
+		overflow-x: hidden;
+		display: flex;
+		flex-direction: column;
+		gap: 16px;
+		padding: 0.4em 0.6em;
+	}
+
+	.genres .name { opacity: 0.6; }
+	.genres .name.chosen { opacity: 1; }
+	.genres.dim { opacity: 0.35; }
+
+	.station-row {
+		display: grid;
+		grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) 80px;
+		column-gap: 24px;
+		width: 100%;
+	}
+
+	.kind {
+		font-size: 13px;
+		opacity: 0.45;
+		text-align: right;
+	}
+
+	.kept {
+		font-size: 9px;
+		margin-left: 8px;
+		opacity: 0.55;
+	}
+
+	.live {
+		font-family: 'Noto Sans JP', sans-serif;
+		font-size: 12px;
+		letter-spacing: 0.4em;
+		opacity: 0.55;
+		line-height: 18px;
+	}
+
 	/* ── songs ── */
 	.songs {
 		position: absolute;
-		/* right under the search */
-		top: calc(6.25% + 40px);
+		/* right under the search and the two words */
+		top: calc(6.25% + 72px);
 		bottom: calc(6.25% + 132px);
 		left: calc(6.25% + 96px);
 		right: calc(6.25% + 96px);

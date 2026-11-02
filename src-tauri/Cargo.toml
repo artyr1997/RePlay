@@ -27,6 +27,8 @@ walkdir = "2.5.0"
 tauri-plugin-dialog = "2"
 dirs = "7.0.0"
 rodio = { version = "0.23.0", features = ["symphonia-all"] }
+# the radio: Radio Browser's list of stations, and their streams
+ureq = "3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.5"

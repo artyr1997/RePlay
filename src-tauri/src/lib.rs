@@ -1,14 +1,16 @@
 //! ReSound: a quiet music player in the ReNote style.
 //! Rust scans the music folder, keeps the library and playlists in SQLite and
-//! plays the audio; the Svelte UI talks to it through these commands and the
-//! `player` / `scan` events.
+//! plays the audio, or a radio station (radio.rs); the Svelte UI talks to it through
+//! these commands and the `player` / `scan` events.
 
 mod db;
 mod player;
+mod radio;
 mod scan;
 
 use db::{Db, Playlist, Track};
 use player::{Audio, QueueItem, Queue, Repeat};
+use radio::Station;
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -21,6 +23,14 @@ struct AppState {
     queue: Mutex<Queue>,
     audio: Audio,
     scanning: Mutex<bool>,
+    radio: Mutex<Radio>,
+}
+
+/// The station on (instead of a song), and the list it was picked from: PREV / NEXT go along it.
+#[derive(Default)]
+struct Radio {
+    station: Option<Station>,
+    list: Vec<Station>,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -41,6 +51,10 @@ fn now() -> i64 {
 #[serde(rename_all = "camelCase")]
 struct Status {
     track: Option<Track>,
+    /// a station instead of a song
+    station: Option<Station>,
+    /// the song on air, as the station names it
+    on_air: Option<String>,
     playing: bool,
     position_ms: u64,
     shuffle: bool,
@@ -50,13 +64,16 @@ struct Status {
 
 fn status(state: &AppState) -> CmdResult<Status> {
     let audio = state.audio.status.lock().map_err(err)?.clone();
+    let station = state.radio.lock().map_err(err)?.station.clone();
     let queue = state.queue.lock().map_err(err)?;
     let track = match queue.current() {
-        Some(item) => state.db.lock().map_err(err)?.track(item.id).ok(),
-        None => None,
+        Some(item) if station.is_none() => state.db.lock().map_err(err)?.track(item.id).ok(),
+        _ => None,
     };
     Ok(Status {
         track,
+        on_air: if station.is_some() { audio.on_air } else { None },
+        station,
         playing: audio.playing,
         position_ms: audio.position_ms,
         shuffle: queue.shuffle,
@@ -68,6 +85,10 @@ fn status(state: &AppState) -> CmdResult<Status> {
 /// Starts whatever the queue now points at (or stops), and tells the UI.
 fn play_current(app: &AppHandle, item: Option<QueueItem>) {
     let state = app.state::<AppState>();
+    // a song: the radio is off
+    if let Ok(mut radio) = state.radio.lock() {
+        radio.station = None;
+    }
     match item {
         Some(item) => state.audio.load(item.path, true),
         None => state.audio.stop(),
@@ -239,6 +260,11 @@ fn play(app: AppHandle, state: State<AppState>, track_ids: Vec<i64>, start: usiz
 #[tauri::command]
 fn toggle_play(app: AppHandle, state: State<AppState>) -> CmdResult<()> {
     let audio = state.audio.status.lock().map_err(err)?.clone();
+    if state.radio.lock().map_err(err)?.station.is_some() {
+        // a station: off, or tuned in again
+        if audio.playing { state.audio.pause() } else { state.audio.play() }
+        return Ok(());
+    }
     if audio.playing {
         state.audio.pause();
     } else if audio.position_ms == 0 && !state.queue.lock().map_err(err)?.is_empty() {
@@ -254,6 +280,9 @@ fn toggle_play(app: AppHandle, state: State<AppState>) -> CmdResult<()> {
 
 #[tauri::command]
 fn next(app: AppHandle, state: State<AppState>) -> CmdResult<()> {
+    if state.radio.lock().map_err(err)?.station.is_some() {
+        return turn_dial(&app, &state, 1);
+    }
     let item = state.queue.lock().map_err(err)?.advance(false).cloned();
     if item.is_some() {
         play_current(&app, item);
@@ -264,6 +293,9 @@ fn next(app: AppHandle, state: State<AppState>) -> CmdResult<()> {
 /// Like Music: more than 3 s in → back to the start of the track, otherwise the previous one.
 #[tauri::command]
 fn previous(app: AppHandle, state: State<AppState>) -> CmdResult<()> {
+    if state.radio.lock().map_err(err)?.station.is_some() {
+        return turn_dial(&app, &state, -1);
+    }
     let position = state.audio.status.lock().map_err(err)?.position_ms;
     if position > 3000 {
         state.audio.seek(Duration::ZERO);
@@ -316,6 +348,83 @@ fn upcoming(state: State<AppState>) -> CmdResult<Vec<Track>> {
     let ids = state.queue.lock().map_err(err)?.upcoming();
     let db = state.db.lock().map_err(err)?;
     Ok(ids.into_iter().filter_map(|id| db.track(id).ok()).collect())
+}
+
+// ── radio ──
+
+#[tauri::command]
+fn radio_genres() -> Vec<&'static str> {
+    radio::GENRES.iter().map(|g| g.name).collect()
+}
+
+/// A genre's stations (asked of Radio Browser, off the main thread).
+#[tauri::command]
+async fn radio_stations(genre: String) -> CmdResult<Vec<Station>> {
+    tauri::async_runtime::spawn_blocking(move || radio::stations(&genre)).await.map_err(err)?
+}
+
+#[tauri::command]
+async fn radio_search(query: String) -> CmdResult<Vec<Station>> {
+    tauri::async_runtime::spawn_blocking(move || radio::search(&query)).await.map_err(err)?
+}
+
+fn favorites(db: &Db) -> Vec<Station> {
+    db.setting("radio_favorites").ok().flatten().and_then(|json| serde_json::from_str(&json).ok()).unwrap_or_default()
+}
+
+/// The stations kept (newest first), here in the library: there without the network too.
+#[tauri::command]
+fn radio_favorites(state: State<AppState>) -> CmdResult<Vec<Station>> {
+    let db = state.db.lock().map_err(err)?;
+    Ok(favorites(&db))
+}
+
+#[tauri::command]
+fn set_radio_favorite(state: State<AppState>, station: Station, on: bool) -> CmdResult<()> {
+    let db = state.db.lock().map_err(err)?;
+    let mut kept: Vec<Station> = favorites(&db).into_iter().filter(|s| s.uuid != station.uuid).collect();
+    if on {
+        kept.insert(0, station);
+    }
+    db.set_setting("radio_favorites", &serde_json::to_string(&kept).map_err(err)?)
+}
+
+/// Plays `station`; `list` is where it was picked from, for PREV / NEXT.
+#[tauri::command]
+fn play_station(app: AppHandle, state: State<AppState>, station: Station, list: Vec<Station>) -> CmdResult<()> {
+    tune_in(&app, &state, station, Some(list))
+}
+
+fn tune_in(app: &AppHandle, state: &AppState, station: Station, list: Option<Vec<Station>>) -> CmdResult<()> {
+    radio::count_click(&station.uuid);
+    state.audio.stream(station.url.clone());
+    {
+        let mut radio = state.radio.lock().map_err(err)?;
+        if let Some(list) = list {
+            radio.list = list;
+        }
+        radio.station = Some(station);
+    }
+    std::thread::sleep(Duration::from_millis(30));
+    if let Ok(s) = status(state) {
+        let _ = app.emit("player", s);
+    }
+    Ok(())
+}
+
+/// PREV / NEXT on the radio: the station before or after this one in its list.
+fn turn_dial(app: &AppHandle, state: &AppState, step: isize) -> CmdResult<()> {
+    let next = {
+        let radio = state.radio.lock().map_err(err)?;
+        let Some(on) = &radio.station else { return Ok(()) };
+        let count = radio.list.len() as isize;
+        if count == 0 {
+            return Ok(());
+        }
+        let at = radio.list.iter().position(|s| s.uuid == on.uuid).map(|i| i as isize).unwrap_or(-step.min(0));
+        radio.list[((at + step) % count + count) as usize % count as usize].clone()
+    };
+    tune_in(app, state, next, None)
 }
 
 #[tauri::command]
@@ -435,6 +544,7 @@ pub fn run() {
                 queue: Mutex::new(Queue::default()),
                 audio,
                 scanning: Mutex::new(false),
+                radio: Mutex::new(Radio::default()),
             });
 
             #[cfg(target_os = "macos")]
@@ -473,6 +583,12 @@ pub fn run() {
             player_status,
             upcoming,
             reveal_in_finder,
+            radio_genres,
+            radio_stations,
+            radio_search,
+            radio_favorites,
+            set_radio_favorite,
+            play_station,
         ])
         .build(tauri::generate_context!())
         .expect("error while running ReSound")
