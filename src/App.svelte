@@ -61,14 +61,17 @@
 		status = await api.status();
 	}
 
+	// S / R (no buttons for them): what they turned to shows for a moment
 	async function toggleShuffle() {
 		await api.setShuffle(!status.shuffle);
 		await refreshStatus();
+		showToast(status.shuffle ? 'SHUF' : 'ORDER');
 	}
 
 	async function cycleRepeat() {
-		await api.cycleRepeat();
+		const repeat = await api.cycleRepeat();
 		await refreshStatus();
+		showToast({ all: 'REPT', one: 'ONE', off: 'ONCE' }[repeat]);
 	}
 
 	function seekTo(e: MouseEvent) {
@@ -402,7 +405,7 @@
 		['↑ ↓', 'Move around'],
 		['Enter', 'Play'],
 		['/', 'Search'],
-		['1 / 2', 'Songs / radio'],
+		['1 / 2', 'Songs / live radio'],
 		['← →', 'Genres / stations (radio)'],
 		['F', 'Keep a station'],
 		['S / R', 'Shuffle / repeat'],
@@ -462,12 +465,9 @@
 	</main>
 {:else}
 
-<!-- shuffle / repeat: inked with a vertical stroke when on -->
-<!-- (a station has neither: they rest while one is on) -->
-<button class="side switch shuf" class:ink-mark-v={status.shuffle} class:rest={!!status.station} onclick={toggleShuffle} title="Shuffle (S)">SHUF</button>
-<button class="side switch rept" class:ink-mark-v={status.repeat !== 'off'} class:rest={!!status.station} onclick={cycleRepeat} title="Repeat (R)">
-	{status.repeat === 'one' ? 'ONE' : 'REPT'}
-</button>
+<!-- songs or the radio: the one shown inked with a vertical stroke (shuffle and repeat are on S / R) -->
+<button class="side switch shuf" class:ink-mark-v={mode === 'songs'} onclick={() => setMode('songs')} title="Songs (1)">SONG</button>
+<button class="side switch rept" class:ink-mark-v={mode === 'radio'} onclick={() => setMode('radio')} title="Radio (2)">LIVE</button>
 
 <button class="side boxed nav-prev" onclick={() => api.previous().then(refreshStatus)} title="Previous (⌘←)">PREV</button>
 <button class="side boxed nav-next" onclick={() => api.next().then(refreshStatus)} title="Next (⌘→)">NEXT</button>
@@ -477,12 +477,6 @@
 
 <!-- the search is the title -->
 <input bind:this={searchInput} bind:value={query} class="search" type="text" placeholder={mode === 'radio' ? 'Search stations' : 'Search'} oninput={() => (ti = 0)} />
-
-<!-- songs or the radio, under the search -->
-<nav class="modes">
-	<button onclick={() => setMode('songs')} title="Songs (1)"><span class:ink-mark={mode === 'songs'}>SONGS</span></button>
-	<button onclick={() => setMode('radio')} title="Radio (2)"><span class:ink-mark={mode === 'radio'}>RADIO</span></button>
-</nav>
 
 <main class="fade-in">
 	{#if mode === 'radio'}
@@ -676,39 +670,10 @@
 		opacity: 0.5;
 	}
 
-	/* ── songs or radio: two words under the search ── */
-	.modes {
-		position: fixed;
-		top: 76px;
-		left: 50%;
-		transform: translateX(-50%);
-		display: flex;
-		gap: 2.4rem;
-		z-index: 5;
-	}
-
-	.modes button {
-		background: transparent;
-		border: none;
-		padding: 0.2em 0.4em;
-		font-family: 'Noto Sans JP', sans-serif;
-		font-size: 12px;
-		letter-spacing: 0.3em;
-		opacity: 0.75;
-		cursor: pointer;
-		transition: opacity 200ms ease;
-	}
-
-	.modes button:hover { opacity: 1; }
-	.modes .ink-mark { padding-right: calc(0.45em - 0.3em); }
-
-	/* shuffle and repeat rest while a station is on */
-	.side.rest { opacity: 0.3; pointer-events: none; }
-
 	/* ── radio: genres | stations ── */
 	.radio {
 		position: absolute;
-		top: calc(6.25% + 72px);
+		top: calc(6.25% + 40px);
 		bottom: calc(6.25% + 132px);
 		left: calc(6.25% + 96px);
 		right: calc(6.25% + 96px);
@@ -761,8 +726,8 @@
 	/* ── songs ── */
 	.songs {
 		position: absolute;
-		/* right under the search and the two words */
-		top: calc(6.25% + 72px);
+		/* right under the search */
+		top: calc(6.25% + 40px);
 		bottom: calc(6.25% + 132px);
 		left: calc(6.25% + 96px);
 		right: calc(6.25% + 96px);
