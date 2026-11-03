@@ -914,6 +914,12 @@
 		opacity: 1;
 	}
 
+	/* only in the window in use: in one behind, LIBRARY in the corner stays out of sight */
+	:global(html.blurred) .mini-expand {
+		opacity: 0 !important;
+		pointer-events: none;
+	}
+
 	.mini-btn.arrow {
 		font-size: 20px;
 		letter-spacing: 0;
