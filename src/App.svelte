@@ -287,12 +287,6 @@
 			if (e.key === ' ') {
 				e.preventDefault();
 				api.togglePlay().then(refreshStatus);
-			} else if (e.key === 'ArrowRight') {
-				e.preventDefault();
-				api.next().then(refreshStatus);
-			} else if (e.key === 'ArrowLeft') {
-				e.preventDefault();
-				api.previous().then(refreshStatus);
 			} else if (!mod && e.code === 'KeyM') {
 				setMini(false);
 			}
@@ -345,13 +339,8 @@
 		}
 		if (mode === 'radio' && !mod && radioKeys(e)) return;
 
-		if (mod && e.key === 'ArrowRight') {
-			e.preventDefault();
-			api.next().then(refreshStatus);
-		} else if (mod && e.key === 'ArrowLeft') {
-			e.preventDefault();
-			api.previous().then(refreshStatus);
-		} else if (e.key === ' ') {
+		// previous / next: the Mac's media keys (⏮ ⏭, src-tauri/src/media.rs), not the arrows
+		if (e.key === ' ') {
 			e.preventDefault();
 			api.togglePlay().then(refreshStatus);
 		} else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -401,7 +390,7 @@
 
 	const shortcuts = [
 		['Space', 'Play / pause'],
-		['⌘ ← / ⌘ →', 'Previous / next song'],
+		['⏮ / ⏭', 'Previous / next song (the Mac\'s media keys)'],
 		['↑ ↓', 'Move around'],
 		['Enter', 'Play'],
 		['/', 'Search'],
@@ -456,11 +445,11 @@
 			</div>
 		{/if}
 		<div class="mini-controls">
-			<button class="mini-btn" onclick={() => api.previous().then(refreshStatus)} title="Previous (←)">PREV</button>
+			<button class="mini-btn arrow" onclick={() => api.previous().then(refreshStatus)} title="Previous (⏮)" aria-label="Previous">←</button>
 			<button class="play" onclick={() => api.togglePlay().then(refreshStatus)} title="Play / pause (Space)">
 				<span class="ink-mark">{status.playing ? 'PAUSE' : 'PLAY'}</span>
 			</button>
-			<button class="mini-btn" onclick={() => api.next().then(refreshStatus)} title="Next (→)">NEXT</button>
+			<button class="mini-btn arrow" onclick={() => api.next().then(refreshStatus)} title="Next (⏭)" aria-label="Next">→</button>
 		</div>
 	</main>
 {:else}
@@ -469,8 +458,8 @@
 <button class="side switch shuf" class:ink-mark-v={mode === 'songs'} onclick={() => setMode('songs')} title="Songs (1)">SONG</button>
 <button class="side switch rept" class:ink-mark-v={mode === 'radio'} onclick={() => setMode('radio')} title="Radio (2)">LIVE</button>
 
-<button class="side boxed nav-prev" onclick={() => api.previous().then(refreshStatus)} title="Previous (⌘←)">PREV</button>
-<button class="side boxed nav-next" onclick={() => api.next().then(refreshStatus)} title="Next (⌘→)">NEXT</button>
+<button class="side boxed nav-prev" onclick={() => api.previous().then(refreshStatus)} title="Previous (⏮)">PREV</button>
+<button class="side boxed nav-next" onclick={() => api.next().then(refreshStatus)} title="Next (⏭)">NEXT</button>
 
 <button class="side plain nav-info" onclick={() => (popup = 'info')} title="Info (I)">INFO</button>
 <button class="side plain nav-mini" onclick={() => setMini(true)} title="Mini player (M)">MINI</button>
@@ -923,6 +912,12 @@
 	.mini-btn:hover,
 	.mini-expand:hover {
 		opacity: 1;
+	}
+
+	.mini-btn.arrow {
+		font-size: 20px;
+		letter-spacing: 0;
+		line-height: 1;
 	}
 
 	/* ── mini player ── */

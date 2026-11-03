@@ -4,6 +4,8 @@
 //! these commands and the `player` / `scan` events.
 
 mod db;
+#[cfg(target_os = "macos")]
+mod media;
 mod player;
 mod radio;
 mod scan;
@@ -547,6 +549,8 @@ pub fn run() {
                 radio: Mutex::new(Radio::default()),
             });
 
+            #[cfg(target_os = "macos")]
+            media::listen(app.handle());
             #[cfg(target_os = "macos")]
             if let Some(window) = app.get_webview_window("main") {
                 round_window(&window);

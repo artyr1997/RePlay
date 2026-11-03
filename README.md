@@ -12,7 +12,7 @@ interface is Svelte.
 - **Actions** (E or right click): play, play next, add to queue, add to playlist, show in Finder
 - Files: MP3, AAC / M4A, ALAC, FLAC, WAV, AIFF, OGG. Without tags, an
   `Artist / Album / 01 Song.mp3` layout is read from the folder and file names.
-- Keys: Space play/pause · ⌘← ⌘→ previous/next · ↑ ↓ ← → move · Enter play ·
+- Keys: Space play/pause · the Mac's media keys ⏮ ⏯ ⏭ (F7 F8 F9, also the headphones' buttons and Control Centre) previous / play-pause / next · ↑ ↓ ← → move · Enter play ·
   1–4 tabs · / search · S shuffle · R repeat · Q queue · N new playlist · I info
 
 ## Run

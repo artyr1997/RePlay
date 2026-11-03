@@ -2883,6 +2883,7 @@ dependencies = [
 name = "resound"
 version = "0.1.0"
 dependencies = [
+ "block2",
  "dirs",
  "lofty",
  "objc2",
