@@ -432,9 +432,7 @@
 		{:else}
 			<p class="mini-title idle">Nothing playing.</p>
 		{/if}
-		{#if status.station}
-			<p class="live mini-progress">LIVE</p>
-		{:else}
+		{#if !status.station}
 			<div class="progress-row mini-progress">
 				<span class="clock">{formatTime(status.positionMs)}</span>
 				<button class="bar" onclick={seekTo} aria-label="Seek" disabled={!status.track}>
@@ -547,9 +545,7 @@
 	{:else}
 		<p class="now idle">Nothing playing.</p>
 	{/if}
-	{#if status.station}
-		<p class="live">LIVE</p>
-	{:else}
+	{#if !status.station}
 		<div class="progress-row">
 			<span class="clock">{formatTime(status.positionMs)}</span>
 			<button class="bar" onclick={seekTo} aria-label="Seek" disabled={!status.track}>
@@ -702,14 +698,6 @@
 		font-size: 9px;
 		margin-left: 8px;
 		opacity: 0.55;
-	}
-
-	.live {
-		font-family: 'Noto Sans JP', sans-serif;
-		font-size: 12px;
-		letter-spacing: 0.4em;
-		opacity: 0.55;
-		line-height: 18px;
 	}
 
 	/* ── songs ── */
