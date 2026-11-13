@@ -1,4 +1,4 @@
-# ReSound
+# RePlay
 
 A quiet music player for macOS in the style of ReNote. Rust (Tauri) scans your music
 folder, keeps the library and playlists in SQLite and plays the audio (rodio); the
@@ -20,8 +20,8 @@ interface is Svelte.
 ```sh
 npm install
 npm run desktop        # dev window with live reload
-npm run desktop:build  # ReSound.app + .dmg in src-tauri/target/release/bundle/
+npm run desktop:build  # RePlay.app + .dmg in src-tauri/target/release/bundle/
 ```
 
 Rust tests: `cd src-tauri && cargo test`. The music folder defaults to `~/Music`
-(change it in INFO). Library data: `~/Library/Application Support/com.artursavytskyi.resound/`.
+(change it in INFO). Library data: `~/Library/Application Support/com.artursavytskyi.resound/` (the identifier from before it was RePlay, kept so the library and settings stay).

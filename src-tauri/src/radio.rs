@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 const API: &str = "https://all.api.radio-browser.info/json";
-const AGENT: &str = concat!("ReSound/", env!("CARGO_PKG_VERSION"));
+const AGENT: &str = concat!("RePlay/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -59,7 +59,7 @@ pub const GENRES: &[Genre] = &[
     Genre { name: "Ukraine", key: "country:UA" },
 ];
 
-/// Radio Browser's answer, of which ReSound keeps a little.
+/// Radio Browser's answer, of which RePlay keeps a little.
 #[derive(Deserialize)]
 struct Listed {
     stationuuid: String,

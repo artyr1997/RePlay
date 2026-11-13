@@ -539,7 +539,7 @@ mod tests {
 
     #[test]
     fn decodes_real_audio_and_reads_its_length() {
-        let path = std::env::temp_dir().join(format!("resound-tone-{}.wav", std::process::id()));
+        let path = std::env::temp_dir().join(format!("replay-tone-{}.wav", std::process::id()));
         std::fs::write(&path, wav_bytes()).unwrap();
 
         let source = decode(&path).expect("rodio decodes the file");

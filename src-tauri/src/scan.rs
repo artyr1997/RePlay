@@ -147,7 +147,7 @@ mod tests {
 
     #[test]
     fn scan_finds_audio_falls_back_to_names_and_drops_missing() {
-        let dir = std::env::temp_dir().join(format!("resound-scan-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("replay-scan-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("Some Album")).unwrap();
         // not real audio: tags can't be read, so names are used

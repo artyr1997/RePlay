@@ -1,4 +1,4 @@
-//! ReSound: a quiet music player in the ReNote style.
+//! RePlay: a quiet music player in the ReNote style.
 //! Rust scans the music folder, keeps the library and playlists in SQLite and
 //! plays the audio, or a radio station (radio.rs); the Svelte UI talks to it through
 //! these commands and the `player` / `scan` events.
@@ -107,7 +107,7 @@ fn queue_items(state: &AppState, ids: &[i64]) -> CmdResult<Vec<QueueItem>> {
     ids.iter().map(|&id| db.track(id).map(|t| QueueItem { id, path: PathBuf::from(t.path) })).collect()
 }
 
-/// Files that open ReSound arrive before setup has opened the library: they wait here for it.
+/// Files that open RePlay arrive before setup has opened the library: they wait here for it.
 static WAITING: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
 /// Music opened from outside (ReFile, or Open With in Finder): the folder it's in becomes the queue,
@@ -141,7 +141,7 @@ fn open_files(app: &AppHandle, opened: Vec<PathBuf>) {
     let state = app.state::<AppState>();
     let ids = match state.db.lock().map_err(err).and_then(|db| scan::add(&db, &paths)) {
         Ok(ids) => ids,
-        Err(e) => return eprintln!("ReSound: couldn't open {}: {e}", first.display()),
+        Err(e) => return eprintln!("RePlay: couldn't open {}: {e}", first.display()),
     };
     let Ok(items) = queue_items(&state, &ids) else { return };
     let item = state.queue.lock().ok().and_then(|mut q| {
@@ -853,7 +853,7 @@ pub fn run() {
             play_station,
         ])
         .build(tauri::generate_context!())
-        .expect("error while running ReSound")
+        .expect("error while running RePlay")
         .run(|app, event| {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Opened { urls } = event {

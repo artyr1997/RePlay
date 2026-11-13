@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "ReSound",
+  "productName": "RePlay",
   "version": "0.1.0",
   "identifier": "com.artursavytskyi.resound",
   "build": {
@@ -14,7 +14,7 @@
       {
         "label": "main",
         "visible": false,
-        "title": "ReSound",
+        "title": "RePlay",
         "width": 1440,
         "height": 900,
         "minWidth": 360,

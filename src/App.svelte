@@ -598,7 +598,7 @@
 	</Popup>
 {:else if popup === 'info'}
 	<Popup onclose={closePopup}>
-		<p class="pop-heading">RE:SOUND</p>
+		<p class="pop-heading">RE:PLAY</p>
 		<div class="pop-divider"></div>
 		<p class="pop-text">{allTracks.length} {allTracks.length === 1 ? 'song' : 'songs'}</p>
 		<p class="pop-note">{folder ?? 'No folder chosen'}</p>
