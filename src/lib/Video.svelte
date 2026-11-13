@@ -1,7 +1,9 @@
 <script lang="ts">
-	// A video over the whole window: the picture in the middle, its name, the line and the controls
-	// under it (they go away while it plays and the mouse rests). The file comes through Tauri's
-	// asset protocol, so WebKit plays it itself: MP4 / M4V / MOV (H.264, HEVC), WebM.
+	// A video over the library. In the window: the picture on the paper, its corners round, and under
+	// it, as under the music, its name, the line and the controls, never over the picture. Full screen:
+	// the picture alone on black, the controls over its foot on a shade, gone while it plays and the
+	// mouse rests. The file comes through Tauri's asset protocol, so WebKit plays it itself:
+	// MP4 / M4V / MOV (H.264, HEVC), WebM.
 	import { onMount } from 'svelte';
 	import { convertFileSrc } from '@tauri-apps/api/core';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -17,7 +19,19 @@
 	let duration = $state(0);
 	let failed = $state(false);
 	let resting = $state(false);
+	let full = $state(false);
 	let restTimer: ReturnType<typeof setTimeout> | null = null;
+
+	// the picture as big as its room lets it, in its own proportions (so its corners are the picture's)
+	let roomWidth = $state(0);
+	let roomHeight = $state(0);
+	let videoWidth = $state(0);
+	let videoHeight = $state(0);
+	const fit = $derived.by(() => {
+		if (!videoWidth || !videoHeight || !roomWidth || !roomHeight) return null;
+		const scale = Math.min(roomWidth / videoWidth, roomHeight / videoHeight);
+		return { width: Math.floor(videoWidth * scale), height: Math.floor(videoHeight * scale) };
+	});
 
 	const path = $derived(paths[index]);
 	const name = $derived((path.split('/').pop() ?? path).replace(/\.[^.]+$/, ''));
@@ -29,6 +43,8 @@
 		failed = false;
 		time = 0;
 		duration = 0;
+		videoWidth = 0;
+		videoHeight = 0;
 	});
 
 	function clock(seconds: number) {
@@ -50,8 +66,7 @@
 	}
 
 	function seekTo(e: MouseEvent) {
-		const bar = e.currentTarget as HTMLElement;
-		const rect = bar.getBoundingClientRect();
+		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		if (element && duration) element.currentTime = ((e.clientX - rect.left) / rect.width) * duration;
 	}
 
@@ -70,14 +85,14 @@
 		onclose();
 	}
 
-	// the controls rest with the mouse while the video plays
+	// full screen: the controls rest with the mouse while the video plays
 	function wake() {
 		resting = false;
 		if (restTimer) clearTimeout(restTimer);
-		restTimer = setTimeout(() => (resting = playing), 2500);
+		restTimer = setTimeout(() => (resting = playing && full), 2200);
 	}
 	$effect(() => {
-		if (!playing) resting = false;
+		if (!playing || !full) resting = false;
 		else wake();
 	});
 
@@ -97,44 +112,58 @@
 			toggleFullscreen();
 		} else if (e.key === 'Escape') {
 			e.preventDefault();
-			close();
+			// out of full screen first, then back to the music
+			if (full) win.setFullscreen(false);
+			else close();
 		}
 	}
 
 	onMount(() => {
 		// the window's own keys while the video is up (RePlay's are held, see App.svelte)
 		window.addEventListener('keydown', keydown);
+		const look = () => win.isFullscreen().then(f => (full = f));
+		look();
+		const off = win.onResized(look);
 		return () => {
 			window.removeEventListener('keydown', keydown);
+			off.then(stop => stop());
 			if (restTimer) clearTimeout(restTimer);
 		};
 	});
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="video fade-in" class:resting onmousemove={wake}>
-	{#key path}
-		<!-- svelte-ignore a11y_media_has_caption -->
-		<video
-			bind:this={element}
-			src={convertFileSrc(path)}
-			autoplay
-			bind:currentTime={time}
-			bind:duration
-			onplay={() => (playing = true)}
-			onpause={() => (playing = false)}
-			onended={() => (index < paths.length - 1 ? step(1) : (playing = false))}
-			onerror={() => (failed = true)}
-			onclick={toggle}
-			ondblclick={toggleFullscreen}
-		></video>
-	{/key}
+<div class="video fade-in" class:full class:resting onmousemove={wake}>
+	<div class="room" bind:clientWidth={roomWidth} bind:clientHeight={roomHeight}>
+		{#key path}
+			<!-- svelte-ignore a11y_media_has_caption -->
+			<video
+				bind:this={element}
+				src={convertFileSrc(path)}
+				autoplay
+				bind:currentTime={time}
+				bind:duration
+				bind:videoWidth
+				bind:videoHeight
+				class:shown={fit}
+				style={fit ? `width: ${fit.width}px; height: ${fit.height}px` : ''}
+				onplay={() => (playing = true)}
+				onpause={() => (playing = false)}
+				onended={() => (index < paths.length - 1 ? step(1) : (playing = false))}
+				onerror={() => (failed = true)}
+				onclick={toggle}
+				ondblclick={toggleFullscreen}
+			></video>
+		{/key}
+		{#if failed}
+			<p class="failed">This video doesn't play here.</p>
+		{/if}
+	</div>
 
-	{#if failed}
-		<p class="failed">This video doesn't play here.</p>
-	{/if}
-
-	<button class="close" onclick={close} title="Back to the music (Esc)">MUSIC</button>
+	<div class="corner">
+		<button class="word" onclick={toggleFullscreen} title="Full screen (F, or a double click)">{full ? 'WINDOW' : 'FULL'}</button>
+		<button class="word" onclick={close} title="Back to the music (Esc)">MUSIC</button>
+	</div>
 
 	<div class="controls">
 		<p class="name">{name}</p>
@@ -152,7 +181,6 @@
 				<span class="ink-mark">{playing ? 'PAUSE' : 'PLAY'}</span>
 			</button>
 			<button class="arrow" onclick={() => step(1)} disabled={index === paths.length - 1} title="Next video (⇧→)" aria-label="Next">→</button>
-			<button class="full" onclick={toggleFullscreen} title="Full screen (F, or a double click)">FULL</button>
 		</div>
 	</div>
 </div>
@@ -163,89 +191,88 @@
 		inset: 0;
 		z-index: 50;
 		background: var(--bg);
-		cursor: default;
+		/* the controls' room under the picture */
+		--foot: 150px;
 	}
 
 	.video.resting {
 		cursor: none;
 	}
 
-	video {
+	/* ── the picture ── */
+	.room {
 		position: absolute;
-		inset: 0;
-		width: 100%;
-		height: 100%;
-		object-fit: contain;
-		/* the paper round the picture stays */
+		top: 48px;
+		left: 56px;
+		right: 56px;
+		bottom: var(--foot);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	video {
+		display: block;
+		border-radius: 10px;
 		background: transparent;
+		opacity: 0;
+		transition: opacity 400ms ease;
+	}
+
+	video.shown {
+		opacity: 1;
 	}
 
 	.failed {
 		position: absolute;
-		top: 45%;
-		width: 100%;
-		text-align: center;
 		font-family: 'Kurale', serif;
 		font-size: 18px;
 		opacity: 0.6;
 	}
 
-	.close,
-	.full {
+	/* ── FULL / MUSIC, top right ── */
+	.corner {
+		position: fixed;
+		top: 12px;
+		right: 12px;
+		display: flex;
+		gap: 10px;
+	}
+
+	.word {
 		background: transparent;
 		border: none;
 		padding: 0.3em 0.4em;
 		font-family: 'Noto Sans JP', sans-serif;
 		font-size: 12px;
 		letter-spacing: 0.3em;
-		opacity: 0.6;
+		opacity: 0.55;
 		cursor: pointer;
 		transition: opacity 200ms ease;
 	}
 
-	.close:hover,
-	.full:hover {
+	.word:hover {
 		opacity: 1;
 	}
 
-	.close {
-		position: fixed;
-		top: 12px;
-		right: 12px;
-	}
-
-	/* the paper under the controls, so they read over a bright picture too */
+	/* ── under the picture, as under the music ── */
 	.controls {
-		position: fixed;
+		position: absolute;
 		left: 50%;
-		bottom: 20px;
+		bottom: 18px;
 		transform: translateX(-50%);
-		width: min(560px, calc(100% - 48px));
+		width: min(560px, calc(100% - 64px));
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 6px;
-		padding: 12px 20px 10px;
-		border-radius: 12px;
-		background: color-mix(in srgb, var(--bg) 82%, transparent);
-		backdrop-filter: blur(12px);
-	}
-
-	.controls,
-	.close {
-		transition: opacity 500ms ease;
-	}
-
-	.resting .controls,
-	.resting .close {
-		opacity: 0;
-		pointer-events: none;
+		gap: 8px;
 	}
 
 	.name {
 		max-width: 100%;
 		font-family: 'Kurale', serif;
-		font-size: 18px;
+		font-size: 20px;
+		line-height: 1.3;
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -288,17 +315,10 @@
 	.bar-line { right: 0; opacity: 0.25; }
 
 	.buttons {
-		position: relative;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		gap: 1.6rem;
-		width: 100%;
-	}
-
-	.full {
-		position: absolute;
-		right: 0;
 	}
 
 	.arrow {
@@ -309,12 +329,11 @@
 		line-height: 1;
 		opacity: 0.6;
 		cursor: pointer;
+		transition: opacity 200ms ease;
 	}
 
-	.arrow:disabled {
-		opacity: 0.2;
-		cursor: default;
-	}
+	.arrow:hover:not(:disabled) { opacity: 1; }
+	.arrow:disabled { opacity: 0.18; cursor: default; }
 
 	.play {
 		background: transparent;
@@ -327,4 +346,56 @@
 	}
 
 	.play .ink-mark { padding-right: calc(0.45em - 0.4em); }
+
+	/* ── full screen: the picture alone on black, the controls over its foot ── */
+	.full {
+		background: #000;
+		--foot: 0px;
+	}
+
+	.full .room {
+		inset: 0;
+	}
+
+	.full video {
+		border-radius: 0;
+	}
+
+	.full .controls {
+		left: 0;
+		right: 0;
+		bottom: 0;
+		width: auto;
+		transform: none;
+		padding: 64px max(32px, calc(50% - 280px)) 22px;
+		background: linear-gradient(to top, rgba(0, 0, 0, 0.62), rgba(0, 0, 0, 0));
+		color: #e8e8e8;
+		--line: #e8e8e8;
+	}
+
+	.full .corner {
+		color: #e8e8e8;
+	}
+
+	.full .failed {
+		color: #e8e8e8;
+	}
+
+	/* a small window (the mini player's size): the name gives way, the picture keeps its room */
+	@media (max-height: 420px) {
+		.video:not(.full) { --foot: 100px; }
+		.video:not(.full) .name { display: none; }
+		.room { top: 36px; left: 24px; right: 24px; }
+	}
+
+	.controls,
+	.corner {
+		transition: opacity 500ms ease;
+	}
+
+	.resting .controls,
+	.resting .corner {
+		opacity: 0;
+		pointer-events: none;
+	}
 </style>
