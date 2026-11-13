@@ -119,24 +119,16 @@ fn open_files(app: &AppHandle, opened: Vec<PathBuf>) {
         }
         return;
     }
+    let (videos, opened): (Vec<PathBuf>, Vec<PathBuf>) = opened.into_iter().partition(|p| scan::is_video(p));
+    if !videos.is_empty() {
+        open_videos(app, videos);
+    }
     let opened: Vec<PathBuf> = opened.into_iter().filter(|p| scan::is_audio(p)).collect();
-    let Some(first) = opened.first().cloned() else { return };
-    let mut paths = if opened.len() > 1 {
-        opened
-    } else {
-        first
-            .parent()
-            .and_then(|dir| std::fs::read_dir(dir).ok())
-            .map(|dir| {
-                dir.filter_map(|e| e.ok().map(|e| e.path()))
-                    .filter(|p| p.is_file() && scan::is_audio(p))
-                    .filter(|p| !p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')))
-                    .collect()
-            })
-            .unwrap_or_else(|| vec![first.clone()])
-    };
-    paths.sort_by_key(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()));
-    let start = paths.iter().position(|p| *p == first).unwrap_or(0);
+    if opened.is_empty() {
+        return;
+    }
+    let first = opened[0].clone();
+    let (paths, start) = with_neighbours(opened, scan::is_audio);
 
     let state = app.state::<AppState>();
     let ids = match state.db.lock().map_err(err).and_then(|db| scan::add(&db, &paths)) {
@@ -151,6 +143,67 @@ fn open_files(app: &AppHandle, opened: Vec<PathBuf>) {
     play_current(app, item);
     // the library may have new tracks
     let _ = app.emit("scan", serde_json::json!({ "finished": true }));
+}
+
+/// The folder's files that `keep` takes, sorted by name, with `first` among them (several opened: just those).
+fn with_neighbours(opened: Vec<PathBuf>, keep: fn(&std::path::Path) -> bool) -> (Vec<PathBuf>, usize) {
+    let first = opened[0].clone();
+    let mut paths = if opened.len() > 1 {
+        opened
+    } else {
+        first
+            .parent()
+            .and_then(|dir| std::fs::read_dir(dir).ok())
+            .map(|dir| {
+                dir.filter_map(|e| e.ok().map(|e| e.path()))
+                    .filter(|p| p.is_file() && keep(p))
+                    .filter(|p| !p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')))
+                    .collect()
+            })
+            .unwrap_or_else(|| vec![first.clone()])
+    };
+    paths.sort_by_key(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()));
+    let start = paths.iter().position(|p| *p == first).unwrap_or(0);
+    (paths, start)
+}
+
+/// A video to show: the window takes it when it asks (take_video), told by a "video" event.
+#[derive(Clone, Serialize)]
+struct VideoOpen {
+    paths: Vec<String>,
+    start: usize,
+}
+static VIDEO: Mutex<Option<VideoOpen>> = Mutex::new(None);
+
+/// Videos opened (ReFile, Open With, dropped on the window, O): shown over the library, the folder's
+/// other videos next; the music pauses.
+fn open_videos(app: &AppHandle, opened: Vec<PathBuf>) {
+    let (paths, start) = with_neighbours(opened, scan::is_video);
+    if let Ok(mut video) = VIDEO.lock() {
+        *video = Some(VideoOpen { paths: paths.iter().map(|p| p.to_string_lossy().into_owned()).collect(), start });
+    }
+    if let Some(state) = app.try_state::<AppState>() {
+        if state.audio.status.lock().is_ok_and(|s| s.playing) {
+            state.audio.pause();
+        }
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+    let _ = app.emit("video", ());
+}
+
+#[tauri::command]
+fn take_video() -> Option<VideoOpen> {
+    VIDEO.lock().ok().and_then(|mut v| v.take())
+}
+
+/// Files dropped on the window, or picked with O: videos are shown, music is played.
+#[tauri::command]
+fn open_paths(app: AppHandle, paths: Vec<String>) {
+    open_files(&app, paths.into_iter().map(PathBuf::from).collect());
 }
 
 // ── library ──
@@ -851,6 +904,8 @@ pub fn run() {
             radio_favorites,
             set_radio_favorite,
             play_station,
+            take_video,
+            open_paths,
         ])
         .build(tauri::generate_context!())
         .expect("error while running RePlay")

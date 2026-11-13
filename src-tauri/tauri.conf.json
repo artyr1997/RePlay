@@ -28,7 +28,13 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "**"
+        ]
+      }
     },
     "macOSPrivateApi": true
   },
@@ -62,6 +68,17 @@
         "name": "Audio",
         "role": "Viewer",
         "description": "Music"
+      },
+      {
+        "ext": [
+          "mp4",
+          "m4v",
+          "mov",
+          "webm"
+        ],
+        "name": "Video",
+        "role": "Viewer",
+        "description": "Video"
       }
     ]
   }

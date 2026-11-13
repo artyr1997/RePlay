@@ -5,6 +5,9 @@
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
 	import WindowControls from './lib/WindowControls.svelte';
 	import Popup from './lib/Popup.svelte';
+	import Video from './lib/Video.svelte';
+	import { invoke } from '@tauri-apps/api/core';
+	import { getCurrentWebview } from '@tauri-apps/api/webview';
 	import { scrollFade } from './lib/scrollFade';
 	import { api, songs, matches, formatTime, type Track, type Status, type Station } from './lib/music';
 
@@ -278,10 +281,38 @@
 		}
 	}
 
+	// ── videos: opened from outside, dropped on the window or picked with O (src-tauri/src/lib.rs) ──
+	let video: { paths: string[]; start: number } | null = $state(null);
+	const takeVideo = () =>
+		invoke<{ paths: string[]; start: number } | null>('take_video').then(async v => {
+			if (!v) return;
+			// the same again, or another: shown anew, from its start
+			video = null;
+			await tick();
+			video = v;
+		});
+
+	async function pickVideo() {
+		const picked = await openDialog({
+			multiple: true,
+			filters: [{ name: 'Video', extensions: ['mp4', 'm4v', 'mov', 'webm'] }],
+		});
+		const paths = Array.isArray(picked) ? picked : typeof picked === 'string' ? [picked] : [];
+		if (paths.length) invoke('open_paths', { paths });
+	}
+
 	// ── keyboard ──
 
 	function handleKeydown(e: KeyboardEvent) {
 		const mod = e.metaKey || e.ctrlKey;
+
+		// a video has its own keys (lib/Video.svelte)
+		if (video) return;
+		if (e.code === 'KeyO' && !e.altKey && !e.shiftKey && (mod || (e.target as HTMLElement)?.tagName !== 'INPUT')) {
+			e.preventDefault();
+			pickVideo();
+			return;
+		}
 
 		if (mini) {
 			if (e.key === ' ') {
@@ -371,7 +402,13 @@
 		loadLibrary().then(() => api.rescan().catch(() => {}));
 		refreshStatus();
 		const timer = setInterval(refreshStatus, 400);
+		takeVideo();
 		const unlisten = [
+			listen('video', takeVideo),
+			// files dropped on the window: videos shown, music played
+			getCurrentWebview().onDragDropEvent(e => {
+				if (e.payload.type === 'drop' && e.payload.paths.length) invoke('open_paths', { paths: e.payload.paths });
+			}),
 			listen<Status>('player', e => (status = e.payload)),
 			listen<{ done?: number; total?: number; finished: boolean }>('scan', e => {
 				if (e.payload.finished) {
@@ -401,6 +438,7 @@
 		['Q', 'Up next'],
 		['E / right click', 'Actions'],
 		['M', 'Mini player'],
+		['O', 'Open a video (or drop one on the window)'],
 		['I', 'Info'],
 	];
 </script>
@@ -613,8 +651,12 @@
 			{/each}
 		</div>
 		<div class="pop-divider"></div>
-		<p class="pop-footer">MP3 · AAC · ALAC · FLAC · WAV · AIFF · OGG</p>
+		<p class="pop-footer">MP3 · AAC · ALAC · FLAC · WAV · AIFF · OGG<br />MP4 · MOV · WEBM</p>
 	</Popup>
+{/if}
+
+{#if video}
+	<Video paths={video.paths} start={video.start} onclose={() => (video = null)} />
 {/if}
 
 <style>

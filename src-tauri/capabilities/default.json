@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "UI permissions: core, custom window buttons and drag area, resizing for the mini player, folder picker",
+  "description": "UI permissions: core, custom window buttons and drag area, resizing for the mini player, folder picker, full screen for videos",
   "windows": [
     "main"
   ],
@@ -12,6 +12,10 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-start-dragging",
     "core:window:allow-set-size",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-unminimize",
+    "core:window:allow-show",
+    "core:window:allow-set-focus"
   ]
 }

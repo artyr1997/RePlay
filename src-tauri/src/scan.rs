@@ -15,6 +15,15 @@ pub fn is_audio(path: &Path) -> bool {
         .is_some_and(|e| AUDIO_EXTS.contains(&e.to_ascii_lowercase().as_str()))
 }
 
+/// Videos RePlay plays (in the window, through WebKit), not added to the library.
+pub const VIDEO_EXTS: [&str; 4] = ["mp4", "m4v", "mov", "webm"];
+
+pub fn is_video(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| VIDEO_EXTS.contains(&e.to_ascii_lowercase().as_str()))
+}
+
 /// "03 - Song" / "03. Song" / "03 Song" → (Some(3), "Song")
 fn split_number(stem: &str) -> (Option<u32>, String) {
     let digits: String = stem.chars().take_while(char::is_ascii_digit).collect();
