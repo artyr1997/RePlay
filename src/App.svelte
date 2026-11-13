@@ -404,7 +404,8 @@
 		const timer = setInterval(refreshStatus, 400);
 		takeVideo();
 		const unlisten = [
-			listen('video', takeVideo),
+			// to this window only (lib.rs: the one in front shows it)
+			getCurrentWebview().listen('video', takeVideo),
 			// files dropped on the window: videos shown, music played
 			getCurrentWebview().onDragDropEvent(e => {
 				if (e.payload.type === 'drop' && e.payload.paths.length) invoke('open_paths', { paths: e.payload.paths });
@@ -426,6 +427,7 @@
 	});
 
 	const shortcuts = [
+		['⌘ N', 'New window'],
 		['Space', 'Play / pause'],
 		['⏮ / ⏭', 'Previous / next song (the Mac\'s media keys)'],
 		['↑ ↓', 'Move around'],
